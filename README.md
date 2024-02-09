@@ -33,13 +33,14 @@ Alternatively, if the repository is cloned or forked, ensure you have Jupyter No
 
 To calculate the Local Interaction Scores using the Jupyter Notebook, follow these steps:
 
-1. Ensure your ColabFold output (JSON and PDB files) is placed in a designated directory on your local machine.
+1. Ensure your ColabFold output (JSON and PDB files) is placed in a designated directory on your local machine. Please note that the code is originally designed to work with file names containing two protein names separated by `___`. If a different separator is used in your file names, you must either modify them to use `___` or adjust the code within the notebook to accommodate the separator you have used.
 2. Open the Jupyter Notebook you downloaded or cloned from the repository.
 3. In the notebook, update the `base_path` and `saving_base_path` variables to point to your input directory (where your JSON and PDB files are located) and your output directory (where you want the results to be saved), respectively.
 4. Execute the cells in the Jupyter Notebook sequentially. This can be done by selecting each cell and clicking the "Run" button in the Jupyter interface or by pressing `Shift + Enter` to run the selected cell and move to the next one.
 5. The notebook will process all `.pdb` files in the input directory, calculate the local interaction scores, and save the results in the specified output directory in both CSV and Excel formats for further analysis.
 
 Make sure you have Jupyter Notebook running in an environment that has all the necessary dependencies installed. If you encounter any dependency-related issues, refer to the `Requirements` section to ensure all required packages are installed.
+
 
 ## License
 
