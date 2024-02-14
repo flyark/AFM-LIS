@@ -41,11 +41,10 @@ To calculate the Local Interaction Scores using the Jupyter Notebook, follow the
 
 Make sure you have Jupyter Notebook running in an environment that has all the necessary dependencies installed. If you encounter any dependency-related issues, refer to the `Requirements` section to ensure all required packages are installed.
 
-
-## License
-
-Distributed under the MIT License. See `LICENSE` for more information.
-
 ## Reference
-"Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer", Ah-Ram Kim, Yanhui Hu, Aram Comjean, Jonathan Rodiger, Stephanie E. Mohr, Norbert Perrimon. bioRxiv (2024)
+
+Kim AR, Hu Y, Comjean A, Rodiger J, Mohr SE, Perrimon N. "Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer"
+bioRxiv (2024) doi: XXXXX
+
+FlyPredictome
 https://www.flyrnai.org/tools/fly_predictome/web/
