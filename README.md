@@ -46,6 +46,6 @@ Make sure you have Jupyter Notebook running in an environment that has all the n
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
-## Acknowledgments
-
-- The jupyter notebook is designed to work with ColabFold's output.
+## Reference
+"Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer", Ah-Ram Kim, Yanhui Hu, Aram Comjean, Jonathan Rodiger, Stephanie E. Mohr, Norbert Perrimon. bioRxiv (2024)
+https://www.flyrnai.org/tools/fly_predictome/web/
