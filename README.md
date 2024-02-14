@@ -1,4 +1,4 @@
-# AlphaFold-Multimer Local Interaction Score calculation
+# AlphaFold-Multimer Local Interaction Score (AFM-LIS)
 
 This repository contains a jupyter notebook-based python script designed to calculate the local interaction score (LIS) from ColabFold-derived outputs, including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE) and other related metrics.
 
