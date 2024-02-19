@@ -23,7 +23,7 @@ For more details on our findings and methodology, please refer to our paper [ins
 
 
 ## Requirements
-- Python 3.6.7
+- Python
 - NumPy
 - Pandas
 - Biopython
