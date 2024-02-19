@@ -41,6 +41,9 @@ To calculate the Local Interaction Scores using the Jupyter Notebook, follow the
 
 Make sure you have Jupyter Notebook running in an environment that has all the necessary dependencies installed. If you encounter any dependency-related issues, refer to the `Requirements` section to ensure all required packages are installed.
 
+## Declaration of generative AI usage
+This project utilized OpenAI's ChatGPT to assist in generating Python code, documentation, or other textual content.
+
 ## Reference
 
 Kim AR, Hu Y, Comjean A, Rodiger J, Mohr SE, Perrimon N. "Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer"
