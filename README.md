@@ -30,7 +30,7 @@ Alternatively, if the repository is cloned or forked, ensure you have Jupyter No
 
 ## Features
 - Extraction and processing of data from `.pdb` and `.json` files.
-- Calculation of PAE, pLDDT, and interaction scores between protein complexes.
+- Calculation of local interaction score (LIS) and area (LIA) between protein complexes.
 - Support for multiprocessing to enhance processing speed.
 - Generation of comprehensive data frames summarizing the interaction scores and other relevant metrics.
 - Output files are saved in both CSV and Excel formats for easy analysis.
