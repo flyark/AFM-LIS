@@ -1,25 +1,14 @@
 # AlphaFold-Multimer Local Interaction Score (AFM-LIS)
-
 This repository contains a Jupyter notebook designed to calculate the local interaction score (LIS) from ColabFold-derived outputs, including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE) and other related metrics.
 
-## Features
-
-- Extraction and processing of data from `.pdb` and `.json` files.
-- Calculation of PAE, pLDDT, and interaction scores between protein complexes.
-- Support for multiprocessing to enhance processing speed.
-- Generation of comprehensive data frames summarizing the interaction scores and other relevant metrics.
-- Output files are saved in both CSV and Excel formats for easy analysis.
-
 ## About
-
-This tool is based on research described in the paper [Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer]. In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) provided by this tool offers a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
+This code is based on research described in the paper [Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer]. In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) provided by this tool offers a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
 
 For more details on our findings and methodology, please refer to our paper [insert link to your paper here].
 
 ![Figure 2A](https://github.com/flyark/AFM-LIS/raw/main/Figure%202A.png)
 
 > **Illustration of the algorithm for identifying the Local Interaction Area (LIA) and calculating the Local Interaction Score (LIS).** Following AlphaFold-Multimer predictions, Predicted Aligned Error (PAE) values, indicative of individual amino acid interaction likelihood, are extracted from ColabFold outputs. A PAE cutoff is applied, ignoring amino acid contacts with higher PAE values while retaining those below the threshold as part of the LIA. PAE values within the LIA are inverted to a scale of 0 to 1, where higher values denote stronger predicted interactions. The average of these inverted PAE values at the interaction interfaces yields the LIS.
-
 
 
 ## Requirements
@@ -39,6 +28,12 @@ To use this script, follow these steps:
 
 Alternatively, if the repository is cloned or forked, ensure you have Jupyter Notebook installed on your system to run the `.ipynb` file. If you don't have Jupyter Notebook installed, it can be installed via pip:
 
+## Features
+- Extraction and processing of data from `.pdb` and `.json` files.
+- Calculation of PAE, pLDDT, and interaction scores between protein complexes.
+- Support for multiprocessing to enhance processing speed.
+- Generation of comprehensive data frames summarizing the interaction scores and other relevant metrics.
+- Output files are saved in both CSV and Excel formats for easy analysis.
 
 ## Usage
 
