@@ -16,6 +16,7 @@ This tool is based on research described in the paper [Enhanced Protein-Protein 
 
 For more details on our findings and methodology, please refer to our paper [insert link to your paper here].
 
+![Figure][https://github.com/flyark/AFM-LIS/blob/main/Figure%202.pdf]
 
 ## Requirements
 
