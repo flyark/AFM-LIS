@@ -2,7 +2,7 @@
 This repository contains a Jupyter notebook designed to calculate the local interaction score (LIS) from ColabFold-derived outputs, including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE) and other related metrics.
 
 ## About
-This code is based on research described in the paper [Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer]. In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) provided by this tool offers a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
+This code is based on research described in the paper **Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer**. In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) provided by this tool offers a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
 
 For more details on our findings and methodology, please refer to our paper [insert link to your paper here].
 
