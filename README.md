@@ -1,8 +1,8 @@
 # AlphaFold-Multimer Local Interaction Score (AFM-LIS)
-This repository contains a Jupyter notebook designed to calculate the local interaction score (LIS) from ColabFold-derived outputs, including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE) and other related metrics.
+This repository contains a Jupyter notebook designed to calculate the local interaction score (LIS) from ColabFold-derived outputs, including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE).
 
 ## About
-This code is based on research described in the paper **Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer**. In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) provided by this tool offers a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
+This code is based on research described in the paper **Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer** [insert link to your paper here]. In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) calculated by this strategy offer a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
 
 For more details on our findings and methodology, please refer to our paper [insert link to your paper here].
 
@@ -20,6 +20,10 @@ After calculating the LIS and LIA for your protein complexes, you can use the fo
 - **Average LIA Cutoff**: A value of 1610 or higher is indicative of a likelihood of a positive PPI
 
 These cutoff values have been established through the analysis of fly and human protein reference sets, detailed in Tang et al. (2023) for the fly dataset ([Nature Communications article](https://www.nature.com/articles/s41467-023-37876-0)) and Braun et al. (2009) for the human dataset ([Nature Methods article](https://www.nature.com/articles/nmeth.1281)). For a detailed explanation of how these values were derived, please refer to our paper.
+
+<img width="864" alt="image" src="https://github.com/flyark/AFM-LIS/assets/26104411/f4a2a5f5-4a8b-46f8-b1c9-e0feb5ba5557">
+
+> **Examples of positive PPIs with flexible regions (decent LIS & low ipTM).**
 
 
 ## Requirements
