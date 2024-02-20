@@ -10,6 +10,17 @@ For more details on our findings and methodology, please refer to our paper [ins
 
 > **Illustration of the algorithm for identifying the Local Interaction Area (LIA) and calculating the Local Interaction Score (LIS).** Following AlphaFold-Multimer predictions, Predicted Aligned Error (PAE) values, indicative of individual amino acid interaction likelihood, are extracted from ColabFold outputs. A PAE cutoff is applied, ignoring amino acid contacts with higher PAE values while retaining those below the threshold as part of the LIA. PAE values within the LIA are inverted to a scale of 0 to 1, where higher values denote stronger predicted interactions. The average of these inverted PAE values at the interaction interfaces yields the LIS.
 
+## Interpreting Results
+
+After calculating the LIS and LIA for your protein complexes, you can use the following cutoff values to distinguish between positive and negative Protein-Protein Interactions (PPI):
+
+- **Best LIS Cutoff**: A score of 0.203 or higher is indicative of a likelihood of a positive PPI.
+- **Average LIS Cutoff**: A score of 0.073 or higher is indicative of a likelihood of a positive PPI.
+- **Best LIA Cutoff**: A value of 3432 or higher is indicative of a likelihood of a positive PPI.
+- **Average LIA Cutoff**: A value of 1610 or higher is indicative of a likelihood of a positive PPI
+
+These cutoff values have been established through the analysis of fly and human protein reference sets, detailed in Tang et al. (2023) for the fly dataset ([Nature Communications article](https://www.nature.com/articles/s41467-023-37876-0)) and Braun et al. (2009) for the human dataset ([Nature Methods article](https://www.nature.com/articles/nmeth.1281)). For a detailed explanation of how these values were derived, please refer to our paper.
+
 
 ## Requirements
 - Python
