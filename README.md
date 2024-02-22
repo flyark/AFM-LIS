@@ -66,7 +66,7 @@ This project utilized OpenAI's ChatGPT to assist in generating Python code, docu
 ## Reference
 
 Kim AR, Hu Y, Comjean A, Rodiger J, Mohr SE, Perrimon N. "Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer"
-bioRxiv (2024) [paper link](https://doi.org/10.1101/2024.02.19.580970)
+bioRxiv (2024) [paper link](https://www.biorxiv.org/content/10.1101/2024.02.19.580970v1)
 
 FlyPredictome
 https://www.flyrnai.org/tools/fly_predictome/web/
