@@ -8,16 +8,23 @@ This code is based on research described in the paper **Enhanced Protein-Protein
 
 > **Illustration of the algorithm for identifying the Local Interaction Area (LIA) and calculating the Local Interaction Score (LIS).** Following AlphaFold-Multimer predictions, Predicted Aligned Error (PAE) values, indicative of individual amino acid interaction likelihood, are extracted from ColabFold outputs. A PAE cutoff is applied, ignoring amino acid contacts with higher PAE values while retaining those below the threshold as part of the LIA. PAE values within the LIA are inverted to a scale of 0 to 1, where higher values denote stronger predicted interactions. The average of these inverted PAE values at the interaction interfaces yields the LIS.
 
-## Interpreting Results
+## Interpreting Results for PPI Predictions
 
-After calculating the LIS and LIA for your protein complexes, you can use the following cutoff values to distinguish between positive and negative Protein-Protein Interactions (PPI):
+To predict positive PPI, assess LIS and LIA against these thresholds, derived from analysis of fly and human protein datasets:
 
-- **Best LIS Cutoff**: A score of 0.203 or higher is indicative of a likelihood of a positive PPI.
-- **Average LIS Cutoff**: A score of 0.073 or higher is indicative of a likelihood of a positive PPI.
-- **Best LIA Cutoff**: A value of 3432 or higher is indicative of a likelihood of a positive PPI.
-- **Average LIA Cutoff**: A value of 1610 or higher is indicative of a likelihood of a positive PPI
+**A positive PPI** is suggested if **either** of the following conditions is met:
+- **Best LIS** ≥ 0.203 AND **Best LIA** ≥ 3432, or
+- **Average LIS** ≥ 0.073 AND **Average LIA** ≥ 1610.
 
-These cutoff values have been established through the analysis of fly and human protein reference sets, detailed in [Tang et al. (2023)](https://www.nature.com/articles/s41467-023-37876-0) for the fly dataset and [Braun et al. (2009)](https://www.nature.com/articles/nmeth.1281) for the human dataset. For a detailed explanation of how these values were derived, please refer to [our paper](https://www.biorxiv.org/content/10.1101/2024.02.19.580970v1).
+These cutoff values have been established through analysis of fly and human protein reference sets, detailed in [Tang et al. (2023)](https://www.nature.com/articles/s41467-023-37876-0) for the fly dataset and [Braun et al. (2009)](https://www.nature.com/articles/nmeth.1281) for the human dataset. For a detailed explanation of how these values were derived, please refer to [our paper](https://www.biorxiv.org/content/10.1101/2024.02.19.580970v1). Given the specificity of these values to particular reference sets, it may be necessary to adjust the cutoffs when analyzing different types of PPIs. To ensure the biological relevance of predicted interactions, **experimental validation is highly recommended.**
+
+
+
+
+
+
+
+
 
 <img width="864" alt="image" src="https://github.com/flyark/AFM-LIS/assets/26104411/f4a2a5f5-4a8b-46f8-b1c9-e0feb5ba5557">
 
