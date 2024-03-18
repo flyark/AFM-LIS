@@ -42,7 +42,7 @@ These cutoff values have been established through analysis of fly and human prot
 
 For ColabFold-derived output (with json), use **alphafold_interaction_scores_github_20240209.ipynb**.
 
-For original AlphaFold-derived output (with pkl), use **alphafold_interaction_scores_for alphafold-multimer data_v0.1.ipynb**
+For original AlphaFold-derived output (with pkl), use **alphafold_interaction_scores_for alphafold-multimer data_v0.X.ipynb**
 
 To use this script, follow these steps:
 
