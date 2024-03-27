@@ -32,11 +32,13 @@ These cutoff values have been established through analysis of fly and human prot
 
 
 ## Requirements
-- Python
-- NumPy
-- Pandas
-- Biopython
+- Python (3.6.7)
+- NumPy (1.19.4)
+- Pandas (1.1.4)
+- Biopython (1.78)
 - Multiprocessing support
+
+Tested versions are indicated.
 
 ## Installation
 
