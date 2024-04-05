@@ -36,6 +36,7 @@ These cutoff values have been established through analysis of fly and human prot
 - NumPy (1.19.4)
 - Pandas (1.1.4)
 - Biopython (1.78)
+- openpyxl (3.0.5)
 - Multiprocessing support (fork)
 
 Tested versions are indicated.
