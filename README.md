@@ -43,7 +43,7 @@ Tested versions are indicated.
 
 ## Installation
 
-For AlphaFold3 output (multiple subunits), use **alphafold3_lis_v0.1.ipynb** for plotting.
+For AlphaFold3 output (multiple subunits), use **alphafold3_lis_v0.11.ipynb** for plotting.
 
 For ColabFold-derived output (with json), use **alphafold_interaction_scores_github_20240209.ipynb**.
 
