@@ -8,9 +8,9 @@ This code is based on research described in the paper **Enhanced Protein-Protein
 
 > **Illustration of the algorithm for identifying the Local Interaction Area (LIA) and calculating the Local Interaction Score (LIS).** Following AlphaFold-Multimer predictions, Predicted Aligned Error (PAE) values, indicative of individual amino acid interaction likelihood, are extracted from ColabFold outputs. A PAE cutoff is applied, ignoring amino acid contacts with higher PAE values while retaining those below the threshold as part of the LIA. PAE values within the LIA are inverted to a scale of 0 to 1, where higher values denote stronger predicted interactions. The average of these inverted PAE values at the interaction interfaces yields the LIS.
 
-<img width="986" alt="image" src="https://github.com/flyark/AFM-LIS/assets/26104411/ee538980-0c1b-456f-844e-37b8405030f1">
+<img width="985" alt="image" src="https://github.com/flyark/AFM-LIS/assets/26104411/2f02ea2b-8dc5-42f1-8f3d-e2b2e5b2e0b1">
 
-> **LIA and LIS calculation from AlphaFold3 output.** The Protein-Protrotein-RNA-Zn2+ complex prediction was downloaded from AlphaFold server (https://golgi.sandbox.google.com/example/examplefold_pdb_8aw3). Jupyter notebook for thest plots is availalble in [here](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_v0.11.ipynb).
+> **LIA and LIS calculation from AlphaFold3 output.** The protein-RNA-Zn<sup>2+</sup> complex prediction (Protein-RNA-Ion: PDB 8AW3) was downloaded from [AlphaFold server](https://golgi.sandbox.google.com/example/examplefold_pdb_8aw3). When Zn<sup>2+</sup> ions were removed in the prediction, the protein-RNA complex showed decreased LIA/LIS in protein vs. protein and protein vs. RNA interactions, suggesting an important role of Zn<sup>2+</sup>. Jupyter notebook for these plots is available [here](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_v0.11.ipynb).
 ## Interpreting Results for PPI Predictions
 
 To predict positive PPI, assess LIS and LIA against these thresholds, derived from analysis of fly and human protein datasets:
