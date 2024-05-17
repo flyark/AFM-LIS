@@ -1,5 +1,7 @@
 # AlphaFold-Multimer Local Interaction Score (AFM-LIS)
-This repository contains a Jupyter notebook designed to calculate the local interaction score (LIS) from ColabFold-derived outputs (or original AlphaFold-Multimer-derived), including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE).
+This repository contains a Jupyter notebook designed to calculate the local interaction score (LIS) from ColabFold-derived outputs (or original AlphaFold-Multimer-derived), including JSON and PDB files. The LIS provides insights into the interaction strength and quality within protein complexes, specifically focusing on the predicted aligned error (PAE). 
+
+**AlphaFold3** outputs can be used to analyze LIS and cLIS (LIS in contact interface). For complex more than 2 subunits, **cLIS** should be considered to predict interacting partners. For binary interaction, both LIS and cLIS work fine. 
 
 ## About
 This code is based on research described in the paper **Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer** ([Kim et al., 2024](https://www.biorxiv.org/content/10.1101/2024.02.19.580970v1)). In our study, we found that although the structural accuracy of predicted protein structures by AlphaFold may be less accurate, the Local Interaction Score (LIS) and the Local Interaction Area (LIA) calculated by this strategy offer a valuable means of predicting positive protein-protein interactions (PPI). By considering both LIS and LIA, our method enables researchers to identify potential interactions, even in cases where the structural predictions may have limitations.
@@ -14,9 +16,9 @@ This code is based on research described in the paper **Enhanced Protein-Protein
 
 ![image](https://github.com/flyark/AFM-LIS/assets/26104411/f8d1c393-c330-472b-8862-e6bbe4836771)
 
-> **PAE map, LIA map, LIS heatmap, contact LIA map, contact LIS heatmap, and ipTM heatmap from AlphaFold3 output.** To see the contact LIA and contact LIS from contacting interface with restricting distance, please use [this jupyter notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.14.ipynb). You can adjust PAE cutoff and structure distance cutoff. Default cutoffs are 12 for PAE and 8 for distance.
+> **PAE map, LIA map, LIS heatmap, contact LIA map, contact LIS heatmap, and ipTM heatmap from AlphaFold3 output.** To see the contact LIA and contact LIS from contacting interface with restricting distance, please use newly updated [jupyter notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb). You can adjust PAE cutoff and structure distance cutoff. Default cutoffs are 12 for PAE and 8 for distance. Now you can save the output results in csv. 
  
-## Interpreting Results for PPI Predictions
+## Interpreting Results for binary PPI Predictions
 
 To predict positive PPI, assess LIS and LIA against these thresholds, derived from analysis of fly and human protein datasets:
 
@@ -51,7 +53,7 @@ Tested versions are indicated.
 
 ## Installation
 
-For AlphaFold3 output (multiple subunits), use **alphafold3_lis_v0.1x.ipynb** for plotting.
+For AlphaFold3 output (multiple subunits), use **alphafold3_lis_contact_v0.15.ipynb** for plotting the figures and saving the results in csv.
 
 For ColabFold-derived output (with json), use **alphafold_interaction_scores_github_20240209.ipynb**.
 
