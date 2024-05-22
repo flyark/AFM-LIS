@@ -16,7 +16,7 @@ This code is based on research described in the paper **Enhanced Protein-Protein
 
 ![image](https://github.com/flyark/AFM-LIS/assets/26104411/f8d1c393-c330-472b-8862-e6bbe4836771)
 
-> **PAE map, LIA map, LIS heatmap, contact LIA map, contact LIS heatmap, and ipTM heatmap from AlphaFold3 output.** To see the contact LIA and contact LIS from contacting interface with restricting distance, please use newly updated [jupyter notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb) or [Google Colab]([https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb)). You can adjust PAE cutoff and structure distance cutoff. Default cutoffs are 12 for PAE and 8 for distance. Now you can save the output results in csv. 
+> **PAE map, LIA map, LIS heatmap, contact LIA map, contact LIS heatmap, and ipTM heatmap from AlphaFold3 output.** To see the contact LIA and contact LIS from contacting interface with restricting distance, please use newly updated [jupyter notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb) or [Google Colab](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb). You can adjust PAE cutoff and structure distance cutoff. Default cutoffs are 12 for PAE and 8 for distance. Now you can save the output results in csv. 
  
 ## Interpreting Results for binary PPI Predictions
 
