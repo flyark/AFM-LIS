@@ -12,11 +12,11 @@ This code is based on research described in the paper **Enhanced Protein-Protein
 
 <img width="985" alt="image" src="https://github.com/flyark/AFM-LIS/assets/26104411/2f02ea2b-8dc5-42f1-8f3d-e2b2e5b2e0b1">
 
-> **LIA and LIS calculation from AlphaFold3 output.** The protein-RNA-Zn<sup>2+</sup> complex prediction (Protein-RNA-Ion: PDB 8AW3) was downloaded from [AlphaFold server](https://golgi.sandbox.google.com/example/examplefold_pdb_8aw3). When Zn<sup>2+</sup> ions were removed in the prediction, the protein-RNA complex showed decreased LIA/LIS in protein vs. protein and protein vs. RNA interactions, suggesting an important role of Zn<sup>2+</sup>. Jupyter notebook for these plots is available [here](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_v0.12.ipynb).
+> **LIA and LIS calculation from AlphaFold3 output.** The protein-RNA-Zn<sup>2+</sup> complex prediction (Protein-RNA-Ion: PDB 8AW3) was downloaded from [AlphaFold server](https://golgi.sandbox.google.com/example/examplefold_pdb_8aw3). When Zn<sup>2+</sup> ions were removed in the prediction, the protein-RNA complex showed decreased LIA/LIS in protein vs. protein and protein vs. RNA interactions, suggesting an important role of Zn<sup>2+</sup>. 
 
 ![image](https://github.com/flyark/AFM-LIS/assets/26104411/f8d1c393-c330-472b-8862-e6bbe4836771)
 
-> **PAE map, LIA map, LIS heatmap, contact LIA map, contact LIS heatmap, and ipTM heatmap from AlphaFold3 output.** To see the contact LIA and contact LIS from contacting interface with restricting distance, please use newly updated [jupyter notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb). You can adjust PAE cutoff and structure distance cutoff. Default cutoffs are 12 for PAE and 8 for distance. Now you can save the output results in csv. 
+> **PAE map, LIA map, LIS heatmap, contact LIA map, contact LIS heatmap, and ipTM heatmap from AlphaFold3 output.** To see the contact LIA and contact LIS from contacting interface with restricting distance, please use newly updated [jupyter notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb) or [Google Colab]([https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb)). You can adjust PAE cutoff and structure distance cutoff. Default cutoffs are 12 for PAE and 8 for distance. Now you can save the output results in csv. 
  
 ## Interpreting Results for binary PPI Predictions
 
@@ -53,11 +53,11 @@ Tested versions are indicated.
 
 ## Installation
 
-For AlphaFold3 output (multiple subunits), use **alphafold3_lis_contact_v0.15.ipynb** for plotting the figures and saving the results in csv.
+For AlphaFold3 output (multiple subunits), use [Jupyter Notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.15.ipynb) in your local computer or [Google Colab](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb) for plotting the figures and saving the results in csv.
 
-For ColabFold-derived output (with json), use **alphafold_interaction_scores_github_20240209.ipynb**.
+For AlphaFold2 output predicted by ColabFold, use **alphafold_interaction_scores_github_20240209.ipynb**.
 
-For original AlphaFold-derived output (with pkl), use **alphafold_interaction_scores_for alphafold-multimer data_v0.X.ipynb**
+For AlphaFold2 output predicted by AlphaFold, use **alphafold_interaction_scores_for alphafold-multimer data_v0.X.ipynb**
 
 To use this script, follow these steps:
 
