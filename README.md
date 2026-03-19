@@ -79,6 +79,7 @@ To calculate scores, use the provided Jupyter notebooks:
 **For AlphaFold 3:**
 - use [Jupyter Notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.2.ipynb) in your local computer or
 - use [Google Colab](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb)
+- use [AlphaFold3-ChimeraX](https://flyark.github.io/chimerax_visualization_lis/chimerax_visualization_af3.html) web tool (no installation needed — calculates metrics + generates ChimeraX scripts in the browser)
 
 **For AlphaFold-Multimer (ColabFold output)**:
 - use `lis_analysis_colabfold.py` or
