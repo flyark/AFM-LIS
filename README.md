@@ -84,6 +84,25 @@ To calculate scores, use the provided Jupyter notebooks:
 - use `lis_analysis_colabfold.py` or
 - use `integrated_local_interaction_score_20250514.ipynb`
 
+## ChimeraX Visualization
+
+**[ChimeraX Visualization for LIS](https://flyark.github.io/chimerax_visualization_lis/)** — web tools for visualizing AlphaFold-predicted protein interactions in UCSF ChimeraX.
+
+| Tool | Input | What it does |
+|------|-------|-------------|
+| [FlyPredictome-ChimeraX](https://flyark.github.io/chimerax_visualization_lis/chimerax_visualization_flypredictome.html) | FlyPredictome URL | Fetch pre-computed LIR/cLIR indices and generate ChimeraX scripts |
+| [AlphaFold3-ChimeraX](https://flyark.github.io/chimerax_visualization_lis/chimerax_visualization_af3.html) | AF3 zip file | Calculate iLIS/LIS/cLIS metrics, generate PAE/LIS/cLIS maps and ChimeraX scripts |
+
+**Features:**
+- Runs entirely in the browser — no Python installation needed
+- PAE maps, Score Matrix (iLIS/ipTM), Residue Count Matrix (LIR/cLIR), LIS and cLIS maps
+- Multi-chain complex support (tested with 8-chain CCT complex)
+- Customizable color schemes and adjustable PAE/Cβ cutoffs
+- [Step-by-step guide](https://flyark.github.io/chimerax_visualization_lis/guide.html) available
+
+Source code: [github.com/flyark/chimerax_visualization_lis](https://github.com/flyark/chimerax_visualization_lis)
+
+
 ## Requirements
 - Python (3.6.7)
 - NumPy (1.19.4)
@@ -103,8 +122,8 @@ If you use this work, please cite the relevant paper:
 ## FlyPredictome
 The Fly PPI database, which uses this framework, is available at:
 - **[www.flyrnai.org/tools/fly_predictome/web/](https://www.flyrnai.org/tools/fly_predictome/web/)**
-- Now covers **~800,000** PPI predictions.
+- Now covers **>1.7 million** PPI predictions.
 
 
 ## Declaration of generative AI usage
-This project utilized OpenAI's ChatGPT and Google's Gemini to assist in generating Python code, documentation, or other textual content.
+This project utilized OpenAI's ChatGPT, Google's Gemini, and Anthropic's Claude Code to assist in generating Python code, documentation, or other textual content.
