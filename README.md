@@ -79,29 +79,19 @@ To calculate scores, use the provided Jupyter notebooks:
 **For AlphaFold 3:**
 - use [Jupyter Notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.2.ipynb) in your local computer or
 - use [Google Colab](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb)
-- use [AlphaFold3-ChimeraX](https://flyark.github.io/chimerax_visualization_lis/chimerax_visualization_af3.html) web tool (no installation needed — calculates metrics + generates ChimeraX scripts in the browser)
+- use [In silico PPI Analysis](https://flyark.github.io/in_silico_ppi_analysis/universal.html) web tool (supports AF2, AF3, ColabFold, Boltz, Chai-1, OpenFold — no installation needed)
 
 **For AlphaFold-Multimer (ColabFold output)**:
 - use `lis_analysis_colabfold.py` or
 - use `integrated_local_interaction_score_20250514.ipynb`
 
-## ChimeraX Visualization
+## In silico PPI Analysis & ChimeraX Visualization
 
-**[ChimeraX Visualization for LIS](https://flyark.github.io/chimerax_visualization_lis/)** — web tools for visualizing AlphaFold-predicted protein interactions in UCSF ChimeraX.
+**[In silico PPI Analysis](https://flyark.github.io/in_silico_ppi_analysis/)** — browser-based tools for analyzing protein interactions from any major structure prediction platform and generating UCSF ChimeraX visualization scripts. No installation needed — all analysis runs locally in your browser.
 
-| Tool | Input | What it does |
-|------|-------|-------------|
-| [FlyPredictome-ChimeraX](https://flyark.github.io/chimerax_visualization_lis/chimerax_visualization_flypredictome.html) | FlyPredictome URL | Fetch pre-computed LIR/cLIR indices and generate ChimeraX scripts |
-| [AlphaFold3-ChimeraX](https://flyark.github.io/chimerax_visualization_lis/chimerax_visualization_af3.html) | AF3 zip file | Calculate iLIS/LIS/cLIS metrics, generate PAE/LIS/cLIS maps and ChimeraX scripts |
+Supports **AlphaFold2, AlphaFold3, ColabFold, Boltz, Chai-1, and OpenFold** with automatic platform detection.
 
-**Features:**
-- Runs entirely in the browser — no Python installation needed
-- PAE maps, Score Matrix (iLIS/ipTM), Residue Count Matrix (LIR/cLIR), LIS and cLIS maps
-- Multi-chain complex support (tested with 8-chain CCT complex)
-- Customizable color schemes and adjustable PAE/Cβ cutoffs
-- [Step-by-step guide](https://flyark.github.io/chimerax_visualization_lis/guide.html) available
-
-Source code: [github.com/flyark/chimerax_visualization_lis](https://github.com/flyark/chimerax_visualization_lis)
+Source code: [github.com/flyark/in_silico_ppi_analysis](https://github.com/flyark/in_silico_ppi_analysis)
 
 
 ## Requirements
