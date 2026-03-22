@@ -79,19 +79,17 @@ To calculate scores, use the provided Jupyter notebooks:
 **For AlphaFold 3:**
 - use [Jupyter Notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.2.ipynb) in your local computer or
 - use [Google Colab](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb)
-- use [In silico PPI Analysis](https://flyark.github.io/in_silico_ppi_analysis/universal.html) web tool (supports AF2, AF3, ColabFold, Boltz, Chai-1, OpenFold — no installation needed)
+- use [LIVIA](https://flyark.github.io/LIVIA/universal.html) web tool (supports AF2, AF3, ColabFold, Boltz, Chai-1, OpenFold — no installation needed)
 
 **For AlphaFold-Multimer (ColabFold output)**:
 - use `lis_analysis_colabfold.py` or
 - use `integrated_local_interaction_score_20250514.ipynb`
 
-## In silico PPI Analysis & ChimeraX Visualization
+## LIVIA — Local Interaction VIsualization and Analysis
 
-**[In silico PPI Analysis](https://flyark.github.io/in_silico_ppi_analysis/)** — browser-based tools for analyzing protein interactions from any major structure prediction platform and generating UCSF ChimeraX visualization scripts. No installation needed — all analysis runs locally in your browser.
+**[LIVIA](https://flyark.github.io/LIVIA/)** — browser-based tools for analyzing protein-protein interactions from structure predictions. Supports **AlphaFold2, AlphaFold3, ColabFold, Boltz, Chai-1, and OpenFold** with automatic platform detection. No installation needed — all analysis runs locally in your browser.
 
-Supports **AlphaFold2, AlphaFold3, ColabFold, Boltz, Chai-1, and OpenFold** with automatic platform detection.
-
-Source code: [github.com/flyark/in_silico_ppi_analysis](https://github.com/flyark/in_silico_ppi_analysis)
+Source code: [github.com/flyark/LIVIA](https://github.com/flyark/LIVIA)
 
 
 ## Requirements
