@@ -79,7 +79,8 @@ To calculate scores, use the provided Jupyter notebooks:
 **For AlphaFold 3:**
 - use [Jupyter Notebook](https://github.com/flyark/AFM-LIS/blob/main/alphafold3_lis_contact_v0.2.ipynb) in your local computer or
 - use [Google Colab](https://colab.research.google.com/github/flyark/AFM-LIS/blob/main/alphafold3_local_interaction_score.ipynb)
-**For AlphaFold-Multimer (ColabFold output)**:
+
+**For AlphaFold 2 / AlphaFold-Multimer (ColabFold output)**:
 - use `lis_analysis_colabfold.py` or
 - use `integrated_local_interaction_score_20250514.ipynb`
 
