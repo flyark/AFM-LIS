@@ -84,6 +84,16 @@ To calculate scores, use the provided Jupyter notebooks:
 - use `lis_analysis_colabfold.py` or
 - use `integrated_local_interaction_score_20250514.ipynb`
 
+**Web-based (all platforms):**
+- use [LIVIA](https://flyark.github.io/LIVIA/) — supports AF2, AF3, ColabFold, Boltz, Chai-1, OpenFold. No installation needed.
+
+
+## LIVIA — Web-based Visualization and Analysis
+
+**[LIVIA](https://flyark.github.io/LIVIA/)** (Local Interaction VIsualization and Analysis) provides browser-based interactive analysis with iLIS/ipSAE calculation, ChimeraX/PyMOL script generation, and 3D structure visualization. No installation required — runs entirely in your browser.
+
+Source code: [github.com/flyark/LIVIA](https://github.com/flyark/LIVIA)
+
 
 ## Requirements
 - Python (3.6.7)
