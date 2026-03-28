@@ -1400,7 +1400,7 @@ def _sort_csv(filepath):
             writer = _csv.writer(f)
             writer.writerow(header)
             writer.writerows(rows)
-        print(f'[LIS] Sorted {len(rows)} rows by name, rank')
+        pass  # sorted silently
     except Exception:
         pass
 
@@ -1549,14 +1549,17 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
                     f.write('\n'.join(result_rows) + '\n')
             _progress(name, rank, result_rows is not None, err_msg)
 
+    print()  # newline after progress bar
     _sort_csv(output)
 
     elapsed = _time.time() - t_start
     elapsed_str = f'{int(elapsed // 60)}m{int(elapsed % 60):02d}s' if elapsed >= 60 else f'{elapsed:.1f}s'
-    print(f'\n\n[LIS] CSV saved: {output} (sorted by name, rank)')
-    print(f'[LIS] {total_done} processed in {elapsed_str}' +
-          (f', {total_skipped} skipped' if total_skipped > 0 else '') +
-          (f', {total_failed} failed' if total_failed > 0 else ''))
+    summary = f'{total_done} done'
+    if total_skipped > 0:
+        summary += f', {total_skipped} skipped'
+    if total_failed > 0:
+        summary += f', {total_failed} failed'
+    print(f'[LIS] {summary} in {elapsed_str} — {output}\n')
 
     return output
 
