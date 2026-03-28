@@ -961,10 +961,12 @@ def transform_pae_matrix(pae, pae_cutoff=12):
 # ipSAE Calculation (Dunbrack et al. 2025)
 # ============================================================================
 
-def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
+def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff, dist_matrix=None, dist_cutoff=15.0):
     """Calculate ipSAE (Dunbrack method) for a chain pair.
 
+    Filters residue pairs by PAE < pae_cutoff AND distance < dist_cutoff.
     Uses TM-score-like sigmoid transform on PAE values.
+    Returns max of two asymmetric scores.
     """
     len_i = ei - si
     len_j = ej - sj
@@ -977,20 +979,27 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
     def ptm_func(x, d0):
         return 1.0 / (1.0 + (x / d0) ** 2)
 
+    def passes_dist(ri, rj):
+        if dist_matrix is None:
+            return True
+        if ri < dist_matrix.shape[0] and rj < dist_matrix.shape[1]:
+            return dist_matrix[ri, rj] < dist_cutoff
+        return False
+
     # ipSAE(I->J)
     max_score_ij = 0.0
     for ri in range(si, ei):
         good_count = 0
         for rj in range(sj, ej):
             v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
-            if v < pae_cutoff:
+            if v < pae_cutoff and passes_dist(ri, rj):
                 good_count += 1
         if good_count > 0:
             d0 = calc_d0(good_count)
             final_score = 0.0
             for rj in range(sj, ej):
                 v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
-                if v < pae_cutoff:
+                if v < pae_cutoff and passes_dist(ri, rj):
                     final_score += ptm_func(v, d0)
             final_score /= good_count
             if final_score > max_score_ij:
@@ -1002,14 +1011,14 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
         good_count = 0
         for ri in range(si, ei):
             v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
-            if v < pae_cutoff:
+            if v < pae_cutoff and passes_dist(rj, ri):
                 good_count += 1
         if good_count > 0:
             d0 = calc_d0(good_count)
             final_score = 0.0
             for ri in range(si, ei):
                 v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
-                if v < pae_cutoff:
+                if v < pae_cutoff and passes_dist(rj, ri):
                     final_score += ptm_func(v, d0)
             final_score /= good_count
             if final_score > max_score_ji:
@@ -1084,10 +1093,17 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
     # Build transformed confidence map (symmetrized PAE)
     transformed = transform_pae_matrix(pae[:n_total, :n_total], pae_cutoff)
 
-    # Contact map
+    # Contact map + distance matrix
     coords = parse_structure_coords(struct_text, fmt)
     contact, n_coords = compute_contact_map(coords, cb_cutoff)
     n_use = min(n_total, n_coords)
+
+    # Distance matrix for ipSAE (15Å cutoff)
+    dist_matrix = None
+    if len(coords) > 0:
+        xyz = np.array([[c['x'], c['y'], c['z']] for c in coords])
+        from scipy.spatial.distance import cdist
+        dist_matrix = cdist(xyz, xyz)
 
     # ipTM
     iptm_matrix = scores.get('chainPairIptm')
@@ -1168,7 +1184,8 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
 
             try:
                 ipsae = calc_ipsae(pae, si, min(ei, pae.shape[0]),
-                                   sj, min(ej, pae.shape[1]), 10)  # ipSAE uses PAE cutoff 10
+                                   sj, min(ej, pae.shape[1]), 10,
+                                   dist_matrix=dist_matrix, dist_cutoff=15.0)
             except Exception:
                 ipsae = 0.0
 
