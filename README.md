@@ -131,7 +131,7 @@ For visual analysis with no installation required:
 | iLIS | integrated LIS = √(LIS × cLIS) |
 | iLIA | integrated LIA = √(LIA × cLIA) |
 | iLISA | iLIS × iLIA |
-| ipSAE | interface predicted Squared Aligned Error ([Dunbrack, 2025](https://www.biorxiv.org/content/10.1101/2025.02.10.637595)) |
+| ipSAE | interaction prediction Score from Aligned Errors ([Dunbrack, 2025](https://www.biorxiv.org/content/10.1101/2025.02.10.637595)) |
 | LIS | Local Interaction Score (PAE ≤ 12Å) |
 | cLIS | contact-filtered LIS (PAE ≤ 12Å & Cβ ≤ 8Å) |
 | LIA | Local Interaction Area (count of confident residue pairs) |

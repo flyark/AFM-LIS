@@ -1015,7 +1015,7 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
             if final_score > max_score_ji:
                 max_score_ji = final_score
 
-    return (max_score_ij + max_score_ji) / 2.0
+    return max(max_score_ij, max_score_ji)
 
 
 # ============================================================================
@@ -1168,7 +1168,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
 
             try:
                 ipsae = calc_ipsae(pae, si, min(ei, pae.shape[0]),
-                                   sj, min(ej, pae.shape[1]), pae_cutoff)
+                                   sj, min(ej, pae.shape[1]), 10)  # ipSAE uses PAE cutoff 10
             except Exception:
                 ipsae = 0.0
 
