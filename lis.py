@@ -47,7 +47,7 @@ from scipy.spatial.distance import pdist, squareform
 ION_NAMES = {'ZN', 'CA', 'MG', 'MN', 'FE', 'CU', 'NA', 'K', 'CL', 'NI', 'CO', 'CD'}
 
 CSV_HEADER = (
-    'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,LIS,cLIS,LIA,cLIA,'
+    'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,actifpTM,LIS,cLIS,LIA,cLIA,'
     'ipTM,pLDDT_i,pLDDT_j,pTM,LIR_i,LIR_j,cLIR_i,cLIR_j,'
     'LIpLDDT_i,LIpLDDT_j,cLIpLDDT_i,cLIpLDDT_j,'
     'len_i,len_j,LIR_indices_i,LIR_indices_j,cLIR_indices_i,cLIR_indices_j,'
@@ -1028,6 +1028,59 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff, dist_matrix=None, dist_cutoff=15
 
 
 # ============================================================================
+# actifpTM Calculation (Varga & Ovchinnikov 2025)
+# Approximation from PAE matrix + CB contact map (without distogram logits)
+# ============================================================================
+
+def calc_actifptm(pae, contact, n_use, si, ei, sj, ej):
+    """Calculate approximate actifpTM (actual interface pTM) for a chain pair.
+
+    Uses TM-score transform on PAE values, weighted by binary CB contacts.
+    d0 is computed from full complex length (matching official implementation).
+    Returns max per-residue weighted TM score across all interface residues.
+    """
+    n_total = pae.shape[0]
+    clipped = max(n_total, 19)
+    d0 = 1.24 * (clipped - 15) ** (1.0 / 3.0) - 1.8
+    d0sq = d0 * d0
+    max_score = 0.0
+
+    # Residues in chain I against chain J
+    for r in range(si, ei):
+        weight_sum = 0
+        for s in range(sj, ej):
+            if r < n_use and s < n_use and contact[r, s]:
+                weight_sum += 1
+        if weight_sum == 0:
+            continue
+        score = 0.0
+        for s in range(sj, ej):
+            if r < n_use and s < n_use and contact[r, s]:
+                p = pae[r, s] if r < pae.shape[0] and s < pae.shape[1] else 31.0
+                score += (1.0 / (1.0 + (p * p) / d0sq)) / weight_sum
+        if score > max_score:
+            max_score = score
+
+    # Residues in chain J against chain I
+    for r in range(sj, ej):
+        weight_sum = 0
+        for s in range(si, ei):
+            if r < n_use and s < n_use and contact[r, s]:
+                weight_sum += 1
+        if weight_sum == 0:
+            continue
+        score = 0.0
+        for s in range(si, ei):
+            if r < n_use and s < n_use and contact[r, s]:
+                p = pae[r, s] if r < pae.shape[0] and s < pae.shape[1] else 31.0
+                score += (1.0 / (1.0 + (p * p) / d0sq)) / weight_sum
+        if score > max_score:
+            max_score = score
+
+    return max_score
+
+
+# ============================================================================
 # Single-Model Analysis
 # ============================================================================
 
@@ -1189,6 +1242,12 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             except Exception:
                 ipsae = 0.0
 
+            try:
+                actifptm = calc_actifptm(pae, contact, n_use, si, min(ei, pae.shape[0]),
+                                          sj, min(ej, pae.shape[1]))
+            except Exception:
+                actifptm = 0.0
+
             lia_count = lis_count_ab + lis_count_ba
             clia_count = clis_count_ab + clis_count_ba
             ilia_val = math.sqrt(lia_count * clia_count)
@@ -1210,6 +1269,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'iLISA': ilisa_val,
                 'ipTM': iptm_val,
                 'ipSAE': ipsae,
+                'actifpTM': actifptm,
                 'LIA': lia_count,
                 'cLIA': clia_count,
                 'LIpLDDT_i': liplddt_i,
@@ -1243,6 +1303,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'cLIS': (val['cLIS'] + rv['cLIS']) / 2,
                 'ipTM': (val['ipTM'] + rv['ipTM']) / 2,
                 'ipSAE': max(val['ipSAE'], rv['ipSAE']),
+                'actifpTM': max(val['actifpTM'], rv['actifpTM']),
                 'LIA': val['LIA'] + rv['LIA'],
                 'cLIA': val['cLIA'] + rv['cLIA'],
                 'lenI': val['lenI'], 'lenJ': val['lenJ'],
@@ -1332,7 +1393,7 @@ def format_row(name, rank, struct_file, pair):
     row = [
         name, rank, model_num, pair['ci'], pair['cj'],
         f"{pair['iLIS']:.4f}", f"{pair['iLIA']:.1f}", f"{pair['iLISA']:.1f}",
-        f"{pair['ipSAE']:.4f}",
+        f"{pair['ipSAE']:.4f}", f"{pair.get('actifpTM', 0):.4f}",
         f"{pair['LIS']:.4f}", f"{pair['cLIS']:.4f}",
         f"{pair['LIA']:.1f}", f"{pair['cLIA']:.1f}",
         f"{pair['ipTM']:.4f}",
