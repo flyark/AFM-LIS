@@ -32,7 +32,9 @@ import lzma
 import math
 import os
 import re
+import shutil
 import sys
+import tarfile
 import tempfile
 import zipfile
 from collections import OrderedDict
@@ -94,7 +96,12 @@ def scan_files(path):
     """
     path = str(path)
 
-    if zipfile.is_zipfile(path):
+    if _is_tar_zstd(path):
+        file_map = {}
+        _scan_tar_zstd(path, file_map)
+        filenames = [k for k in file_map.keys() if k != '__tmpdir__']
+        read_fn = _make_tar_zstd_reader(path, file_map)
+    elif zipfile.is_zipfile(path):
         file_map = {}
         _scan_zip(path, file_map, prefix='')
         filenames = list(file_map.keys())
@@ -105,7 +112,7 @@ def scan_files(path):
         filenames = list(file_map.keys())
         read_fn = _make_dir_reader(file_map)
     else:
-        print(f"[LIS] ERROR: {path} is not a valid folder or zip file", file=sys.stderr)
+        print(f"[LIS] ERROR: {path} is not a valid folder, zip, or tar.zstd file", file=sys.stderr)
         sys.exit(1)
 
     return filenames, read_fn, file_map
@@ -142,6 +149,39 @@ def _scan_zip(zip_path, file_map, prefix='', nesting_chain=None):
                 file_map[clean_name] = nesting_chain + [(name,)]
             else:
                 file_map[clean_name] = (zip_path, name)
+
+
+def _is_tar_zstd(path):
+    """Check if path is a tar.zstd or tar.zst file."""
+    return os.path.isfile(path) and any(
+        path.endswith(ext) for ext in ('.tar.zstd', '.tar.zst', '.tar.zstandard')
+    )
+
+
+def _extract_tar_zstd_to_tmpdir(tar_path):
+    """Extract a zstd-compressed tar to a temp directory. Returns the temp dir path."""
+    import subprocess
+    tmpdir = tempfile.mkdtemp(prefix='lis_tar_')
+    print(f"[LIS] Extracting {os.path.basename(tar_path)} to temp dir...", file=sys.stderr)
+    proc2 = subprocess.Popen(['zstd', '-d', '-c', tar_path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proc3 = subprocess.Popen(['tar', 'xf', '-', '-C', tmpdir], stdin=proc2.stdout, stderr=subprocess.DEVNULL)
+    proc2.stdout.close()
+    proc3.communicate()
+    print(f"[LIS] Extraction complete.", file=sys.stderr)
+    return tmpdir
+
+
+def _scan_tar_zstd(tar_path, file_map):
+    """Extract tar.zstd to temp dir and scan as a regular directory."""
+    tmpdir = _extract_tar_zstd_to_tmpdir(tar_path)
+    # Store tmpdir path so reader can find it
+    file_map['__tmpdir__'] = tmpdir
+    _scan_dir(tmpdir, file_map)
+
+
+def _make_tar_zstd_reader(tar_path, file_map):
+    """Create a reader using the extracted temp directory."""
+    return _make_dir_reader(file_map)
 
 
 def _scan_dir(dirpath, file_map):
@@ -961,11 +1001,11 @@ def transform_pae_matrix(pae, pae_cutoff=12):
 # ipSAE Calculation (Dunbrack et al. 2025)
 # ============================================================================
 
-def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff, dist_matrix=None, dist_cutoff=15.0):
-    """Calculate ipSAE (Dunbrack method) for a chain pair.
+def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
+    """Calculate ipSAE (Dunbrack d0res method) for a chain pair.
 
-    Filters residue pairs by PAE < pae_cutoff AND distance < dist_cutoff.
-    Uses TM-score-like sigmoid transform on PAE values.
+    d0 from per-residue count of inter-chain residues with PAE < cutoff.
+    No distance filter. PAE cutoff only.
     Returns max of two asymmetric scores.
     """
     len_i = ei - si
@@ -974,17 +1014,7 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff, dist_matrix=None, dist_cutoff=15
         return 0.0
 
     def calc_d0(L):
-        return max(1.0, 1.24 * (L - 15) ** (1.0 / 3.0) - 1.8) if L > 27 else 1.0
-
-    def ptm_func(x, d0):
-        return 1.0 / (1.0 + (x / d0) ** 2)
-
-    def passes_dist(ri, rj):
-        if dist_matrix is None:
-            return True
-        if ri < dist_matrix.shape[0] and rj < dist_matrix.shape[1]:
-            return dist_matrix[ri, rj] < dist_cutoff
-        return False
+        return max(1.0, 1.24 * (max(L, 27) - 15) ** (1.0 / 3.0) - 1.8)
 
     # ipSAE(I->J)
     max_score_ij = 0.0
@@ -992,15 +1022,16 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff, dist_matrix=None, dist_cutoff=15
         good_count = 0
         for rj in range(sj, ej):
             v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
-            if v < pae_cutoff and passes_dist(ri, rj):
+            if v < pae_cutoff:
                 good_count += 1
         if good_count > 0:
             d0 = calc_d0(good_count)
+            d0sq = d0 * d0
             final_score = 0.0
             for rj in range(sj, ej):
                 v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
-                if v < pae_cutoff and passes_dist(ri, rj):
-                    final_score += ptm_func(v, d0)
+                if v < pae_cutoff:
+                    final_score += 1.0 / (1.0 + (v * v) / d0sq)
             final_score /= good_count
             if final_score > max_score_ij:
                 max_score_ij = final_score
@@ -1011,18 +1042,68 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff, dist_matrix=None, dist_cutoff=15
         good_count = 0
         for ri in range(si, ei):
             v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
-            if v < pae_cutoff and passes_dist(rj, ri):
+            if v < pae_cutoff:
                 good_count += 1
         if good_count > 0:
             d0 = calc_d0(good_count)
+            d0sq = d0 * d0
             final_score = 0.0
             for ri in range(si, ei):
                 v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
-                if v < pae_cutoff and passes_dist(rj, ri):
-                    final_score += ptm_func(v, d0)
+                if v < pae_cutoff:
+                    final_score += 1.0 / (1.0 + (v * v) / d0sq)
             final_score /= good_count
             if final_score > max_score_ji:
                 max_score_ji = final_score
+
+    return max(max_score_ij, max_score_ji)
+
+
+def calc_ipsae_d0chn(pae, si, ei, sj, ej, pae_cutoff):
+    """Calculate ipSAE with d0 from chain pair length (Dunbrack d0chn variant).
+
+    d0 = f(len_chain1 + len_chain2). No distance filter (matches Dunbrack's d0chn).
+    For each residue i in chain1, score = mean of TM(PAE[i,j]) for all j in chain2
+    where PAE[i,j] < pae_cutoff. ipSAE = max over all residues.
+    Returns max of two asymmetric scores (A->B, B->A).
+    """
+    len_i = ei - si
+    len_j = ej - sj
+    if len_i == 0 or len_j == 0:
+        return 0.0
+
+    d0 = max(1.0, 1.24 * (max(len_i + len_j, 27) - 15) ** (1.0 / 3.0) - 1.8)
+    d0sq = d0 * d0
+
+    # ipSAE_d0chn(I->J): for each residue in chain I, score against chain J
+    max_score_ij = 0.0
+    for ri in range(si, ei):
+        score_sum = 0.0
+        count = 0
+        for rj in range(sj, ej):
+            v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
+            if v < pae_cutoff:
+                score_sum += 1.0 / (1.0 + (v * v) / d0sq)
+                count += 1
+        if count > 0:
+            score = score_sum / count
+            if score > max_score_ij:
+                max_score_ij = score
+
+    # ipSAE_d0chn(J->I)
+    max_score_ji = 0.0
+    for rj in range(sj, ej):
+        score_sum = 0.0
+        count = 0
+        for ri in range(si, ei):
+            v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
+            if v < pae_cutoff:
+                score_sum += 1.0 / (1.0 + (v * v) / d0sq)
+                count += 1
+        if count > 0:
+            score = score_sum / count
+            if score > max_score_ji:
+                max_score_ji = score
 
     return max(max_score_ij, max_score_ji)
 
@@ -1237,8 +1318,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
 
             try:
                 ipsae = calc_ipsae(pae, si, min(ei, pae.shape[0]),
-                                   sj, min(ej, pae.shape[1]), 10,
-                                   dist_matrix=dist_matrix, dist_cutoff=15.0)
+                                    sj, min(ej, pae.shape[1]), 10)
             except Exception:
                 ipsae = 0.0
 
@@ -1534,7 +1614,7 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
     # Determine output path
     if output is None:
         basename = os.path.basename(path.rstrip('/'))
-        basename = re.sub(r'\.(zip|tar\.gz|tgz)$', '', basename)
+        basename = re.sub(r'\.(zip|tar\.gz|tar\.zstd|tar\.zst|tgz)$', '', basename)
         output = f'{basename}_lis_analysis.csv'
     if output_dir is None:
         output_dir = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
@@ -1638,6 +1718,12 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
     if total_failed > 0:
         summary += f', {total_failed} failed'
     print(f'[LIS] {summary} in {elapsed_str} — {output}\n')
+
+    # Clean up temp directory from tar.zstd extraction
+    tmpdir = file_map.get('__tmpdir__')
+    if tmpdir and os.path.isdir(tmpdir):
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        print(f'[LIS] Cleaned up temp directory')
 
     return output
 
