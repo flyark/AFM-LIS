@@ -394,38 +394,100 @@ def _find_af3(filenames, basenames_map):
         agg_path = basenames_map.get(f'result_sample_{idx}_confidences_aggregated.json')
         yield ('prediction', idx, base, name, conf_path, agg_path or conf_path, 'pdb')
 
+    # AF3 Server output: prediction_name/seed-N_sample-M/model.cif + confidences.json
+    for name in filenames:
+        base = os.path.basename(name)
+        if base != 'model.cif':
+            continue
+        dirpath = os.path.dirname(name)
+        sample_dir = os.path.basename(dirpath)
+        m = re.match(r'seed-(\d+)_sample-(\d+)', sample_dir)
+        if not m:
+            continue
+        sample_idx = m.group(2)
+        # Prediction name from grandparent directory
+        pred_dir = os.path.dirname(dirpath)
+        pred_name = os.path.basename(pred_dir)
+        if not pred_name or pred_name in ('AF3_outputs', ''):
+            pred_name = 'af3_prediction'
+        # Find confidences.json in same directory
+        conf_key = os.path.join(dirpath, 'confidences.json')
+        conf_path = conf_key if conf_key in basenames_map else None
+        if not conf_path:
+            # Try from file_map directly
+            for f in filenames:
+                if f.startswith(dirpath + '/') and os.path.basename(f) == 'confidences.json':
+                    conf_path = f
+                    break
+        summary_key = os.path.join(dirpath, 'summary_confidences.json')
+        summary_path = summary_key if summary_key in basenames_map else None
+        if not summary_path:
+            for f in filenames:
+                if f.startswith(dirpath + '/') and os.path.basename(f) == 'summary_confidences.json':
+                    summary_path = f
+                    break
+        if conf_path:
+            yield (pred_name, sample_idx, base, name, conf_path, summary_path or conf_path, 'cif')
+
 
 def _find_boltz(filenames, basenames_map):
-    """Boltz: *_model_N.pdb/.cif + confidence_*_model_N.json + pae_*_model_N.npz"""
-    struct_files = sorted(
-        [f for f in filenames if f.endswith('.cif') or f.endswith('.pdb')],
-        key=lambda f: os.path.basename(f)
-    )
-    conf_files = [f for f in filenames if os.path.basename(f).startswith('confidence') and f.endswith('.json')]
-    pae_files = [f for f in filenames if os.path.basename(f).startswith('pae') and f.endswith('.npz')]
+    """Boltz: *_model_N.pdb/.cif + confidence_*_model_N.json + pae_*_model_N.npz
 
-    for i, sf in enumerate(struct_files):
-        fmt = 'cif' if sf.endswith('.cif') else 'pdb'
-        # Match confidence and pae by index
-        conf_path = None
-        for cf in conf_files:
-            fb = os.path.basename(cf)
-            if f'_{i}' in fb or f'model_{i}' in fb:
-                conf_path = cf
-                break
-        if not conf_path and i < len(conf_files):
-            conf_path = conf_files[i]
+    Groups files by parent directory to handle multiple predictions.
+    """
+    # Group files by parent directory
+    from collections import defaultdict
+    dir_groups = defaultdict(list)
+    for f in filenames:
+        parent = os.path.dirname(f)
+        dir_groups[parent].append(f)
 
-        pae_path = None
-        for pf in pae_files:
-            fb = os.path.basename(pf)
-            if f'_{i}' in fb or f'model_{i}' in fb:
-                pae_path = pf
-                break
-        if not pae_path and i < len(pae_files):
-            pae_path = pae_files[i]
+    # If all files in one directory, treat as single prediction
+    if len(dir_groups) <= 1:
+        dir_groups = {'': filenames}
 
-        yield ('boltz', str(i), os.path.basename(sf), sf, pae_path or conf_path, conf_path, fmt)
+    for dirpath, dir_files in sorted(dir_groups.items()):
+        struct_files = sorted([f for f in dir_files if f.endswith('.cif') or f.endswith('.pdb')],
+                              key=lambda f: os.path.basename(f))
+        conf_files = [f for f in dir_files if os.path.basename(f).startswith('confidence') and f.endswith('.json')]
+        pae_files = [f for f in dir_files if os.path.basename(f).startswith('pae') and f.endswith('.npz')]
+
+        if not struct_files:
+            continue
+
+        # Extract prediction name from directory or filename
+        pred_name = os.path.basename(dirpath) if dirpath else 'boltz'
+        # Strip common prefixes like "Boltz1_outputs"
+        if pred_name in ('', 'Boltz1_outputs', 'boltz_outputs'):
+            pred_name = 'boltz'
+
+        for i, sf in enumerate(struct_files):
+            fmt = 'cif' if sf.endswith('.cif') else 'pdb'
+            # Extract model index from filename
+            sb = os.path.basename(sf)
+            model_idx = str(i)
+            m = re.search(r'model_(\d+)', sb)
+            if m:
+                model_idx = m.group(1)
+
+            # Match confidence and pae by model index
+            conf_path = None
+            for cf in conf_files:
+                if f'model_{model_idx}' in os.path.basename(cf):
+                    conf_path = cf
+                    break
+            if not conf_path and i < len(conf_files):
+                conf_path = conf_files[i]
+
+            pae_path = None
+            for pf in pae_files:
+                if f'model_{model_idx}' in os.path.basename(pf):
+                    pae_path = pf
+                    break
+            if not pae_path and i < len(pae_files):
+                pae_path = pae_files[i]
+
+            yield (pred_name, model_idx, sb, sf, pae_path or conf_path, conf_path, fmt)
 
 
 def _find_chai(filenames, basenames_map):
