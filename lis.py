@@ -277,6 +277,12 @@ def detect_platform(filenames, read_fn):
     if has_af3_model and has_af3_summary and has_af3_full:
         return 'alphafold3'
 
+    # AF3 Server output: seed-N_sample-M/model.cif + seed-N_sample-M/confidences.json
+    has_server_model = any(re.search(r'seed-\d+_sample-\d+/model\.cif$', f) for f in filenames)
+    has_server_conf = any(re.search(r'seed-\d+_sample-\d+/confidences\.json$', f) for f in filenames)
+    if has_server_model and has_server_conf:
+        return 'alphafold3'
+
     # ColabFold
     has_cf_model = any(re.search(r'_unrelaxed_rank_\d+', b) and (b.endswith('.pdb') or b.endswith('.cif'))
                        for b in basenames)
@@ -302,6 +308,17 @@ def detect_platform(filenames, read_fn):
 # ============================================================================
 # Model Discovery -- one flat list of (name, rank, model, struct, pae, scores, fmt)
 # ============================================================================
+
+def _get_toplevel_name(filepath):
+    """Extract top-level directory name from a relative path as the prediction name.
+    e.g. 'result-p53-mdm2_chai-1/pred.model_idx_1.cif' → 'result-p53-mdm2_chai-1'
+    e.g. 'pred.model_idx_1.cif' → None (no parent directory)
+    """
+    parts = filepath.split('/')
+    if len(parts) >= 2 and parts[0] and not parts[0].startswith('__'):
+        return parts[0]
+    return None
+
 
 def find_models(filenames, platform, read_fn):
     """Scan filenames and yield model tuples.
@@ -392,9 +409,11 @@ def _find_af3(filenames, basenames_map):
         idx = m.group(1)
         conf_path = basenames_map.get(f'result_sample_{idx}_confidences.json')
         agg_path = basenames_map.get(f'result_sample_{idx}_confidences_aggregated.json')
-        yield ('prediction', idx, base, name, conf_path, agg_path or conf_path, 'pdb')
+        pred_name = _get_toplevel_name(name) or 'prediction'
+        yield (pred_name, idx, base, name, conf_path, agg_path or conf_path, 'pdb')
 
     # AF3 Server output: prediction_name/seed-N_sample-M/model.cif + confidences.json
+    filenames_set = set(filenames)
     for name in filenames:
         base = os.path.basename(name)
         if base != 'model.cif':
@@ -404,30 +423,23 @@ def _find_af3(filenames, basenames_map):
         m = re.match(r'seed-(\d+)_sample-(\d+)', sample_dir)
         if not m:
             continue
+        seed_idx = m.group(1)
         sample_idx = m.group(2)
         # Prediction name from grandparent directory
         pred_dir = os.path.dirname(dirpath)
         pred_name = os.path.basename(pred_dir)
         if not pred_name or pred_name in ('AF3_outputs', ''):
             pred_name = 'af3_prediction'
-        # Find confidences.json in same directory
-        conf_key = os.path.join(dirpath, 'confidences.json')
-        conf_path = conf_key if conf_key in basenames_map else None
-        if not conf_path:
-            # Try from file_map directly
-            for f in filenames:
-                if f.startswith(dirpath + '/') and os.path.basename(f) == 'confidences.json':
-                    conf_path = f
-                    break
-        summary_key = os.path.join(dirpath, 'summary_confidences.json')
-        summary_path = summary_key if summary_key in basenames_map else None
-        if not summary_path:
-            for f in filenames:
-                if f.startswith(dirpath + '/') and os.path.basename(f) == 'summary_confidences.json':
-                    summary_path = f
-                    break
+        # Find confidences.json in same directory via direct path lookup
+        conf_path = os.path.join(dirpath, 'confidences.json')
+        if conf_path not in filenames_set:
+            conf_path = None
+        summary_path = os.path.join(dirpath, 'summary_confidences.json')
+        if summary_path not in filenames_set:
+            summary_path = None
+        rank = f'{seed_idx}_{sample_idx}'
         if conf_path:
-            yield (pred_name, sample_idx, base, name, conf_path, summary_path or conf_path, 'cif')
+            yield (pred_name, rank, base, name, conf_path, summary_path or conf_path, 'cif')
 
 
 def _find_boltz(filenames, basenames_map):
@@ -455,11 +467,12 @@ def _find_boltz(filenames, basenames_map):
         if not struct_files:
             continue
 
-        # Extract prediction name from directory or filename
-        pred_name = os.path.basename(dirpath) if dirpath else 'boltz'
-        # Strip common prefixes like "Boltz1_outputs"
-        if pred_name in ('', 'Boltz1_outputs', 'boltz_outputs'):
-            pred_name = 'boltz'
+        # Extract prediction name from directory or top-level folder
+        pred_name = os.path.basename(dirpath) if dirpath else ''
+        # Use top-level directory name if current name is generic
+        if not pred_name or pred_name in ('Boltz1_outputs', 'boltz_outputs', 'predictions', 'result', 'results'):
+            toplevel = _get_toplevel_name(struct_files[0]) if struct_files else None
+            pred_name = toplevel or 'boltz'
 
         for i, sf in enumerate(struct_files):
             fmt = 'cif' if sf.endswith('.cif') else 'pdb'
@@ -517,7 +530,8 @@ def _find_chai(filenames, basenames_map):
             or basenames_map.get(f'pae.model_idx_{rank_or_idx}.npz')
         )
 
-        yield ('prediction', rank_or_idx, base, name, pae_path or score_path, score_path, 'cif')
+        pred_name = _get_toplevel_name(name) or 'prediction'
+        yield (pred_name, rank_or_idx, base, name, pae_path or score_path, score_path, 'cif')
 
 
 def _find_generic(filenames, basenames_map):
@@ -1075,50 +1089,25 @@ def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
     if len_i == 0 or len_j == 0:
         return 0.0
 
-    def calc_d0(L):
-        return max(1.0, 1.24 * (max(L, 27) - 15) ** (1.0 / 3.0) - 1.8)
+    def _ipsae_one_direction(block):
+        """block[r, s]: PAE from residues r->s. Returns max per-residue score."""
+        mask = block < pae_cutoff
+        good_counts = mask.sum(axis=1)  # per residue
+        has_good = good_counts > 0
+        if not has_good.any():
+            return 0.0
+        d0 = np.maximum(1.0, 1.24 * (np.maximum(good_counts[has_good], 27) - 15) ** (1.0 / 3.0) - 1.8)
+        d0sq = d0 * d0
+        # For each residue with good contacts, compute mean TM-score
+        block_good = block[has_good]
+        mask_good = mask[has_good]
+        tm_vals = np.where(mask_good, 1.0 / (1.0 + (block_good ** 2) / d0sq[:, None]), 0.0)
+        scores = tm_vals.sum(axis=1) / good_counts[has_good]
+        return float(scores.max())
 
-    # ipSAE(I->J)
-    max_score_ij = 0.0
-    for ri in range(si, ei):
-        good_count = 0
-        for rj in range(sj, ej):
-            v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
-            if v < pae_cutoff:
-                good_count += 1
-        if good_count > 0:
-            d0 = calc_d0(good_count)
-            d0sq = d0 * d0
-            final_score = 0.0
-            for rj in range(sj, ej):
-                v = pae[ri, rj] if ri < pae.shape[0] and rj < pae.shape[1] else 31.0
-                if v < pae_cutoff:
-                    final_score += 1.0 / (1.0 + (v * v) / d0sq)
-            final_score /= good_count
-            if final_score > max_score_ij:
-                max_score_ij = final_score
-
-    # ipSAE(J->I)
-    max_score_ji = 0.0
-    for rj in range(sj, ej):
-        good_count = 0
-        for ri in range(si, ei):
-            v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
-            if v < pae_cutoff:
-                good_count += 1
-        if good_count > 0:
-            d0 = calc_d0(good_count)
-            d0sq = d0 * d0
-            final_score = 0.0
-            for ri in range(si, ei):
-                v = pae[rj, ri] if rj < pae.shape[0] and ri < pae.shape[1] else 31.0
-                if v < pae_cutoff:
-                    final_score += 1.0 / (1.0 + (v * v) / d0sq)
-            final_score /= good_count
-            if final_score > max_score_ji:
-                max_score_ji = final_score
-
-    return max(max_score_ij, max_score_ji)
+    block_ij = pae[si:ei, sj:ej].astype(np.float64)
+    block_ji = pae[sj:ej, si:ei].astype(np.float64)
+    return max(_ipsae_one_direction(block_ij), _ipsae_one_direction(block_ji))
 
 
 def calc_ipsae_d0chn(pae, si, ei, sj, ej, pae_cutoff):
@@ -1186,41 +1175,24 @@ def calc_actifptm(pae, contact, n_use, si, ei, sj, ej):
     clipped = max(n_total, 19)
     d0 = 1.24 * (clipped - 15) ** (1.0 / 3.0) - 1.8
     d0sq = d0 * d0
-    max_score = 0.0
 
-    # Residues in chain I against chain J
-    for r in range(si, ei):
-        weight_sum = 0
-        for s in range(sj, ej):
-            if r < n_use and s < n_use and contact[r, s]:
-                weight_sum += 1
-        if weight_sum == 0:
-            continue
-        score = 0.0
-        for s in range(sj, ej):
-            if r < n_use and s < n_use and contact[r, s]:
-                p = pae[r, s] if r < pae.shape[0] and s < pae.shape[1] else 31.0
-                score += (1.0 / (1.0 + (p * p) / d0sq)) / weight_sum
-        if score > max_score:
-            max_score = score
+    def _actifptm_one_direction(r_start, r_end, s_start, s_end):
+        ri_end = min(r_end, n_use)
+        si_end = min(s_end, n_use)
+        if ri_end <= r_start or si_end <= s_start:
+            return 0.0
+        contact_block = contact[r_start:ri_end, s_start:si_end]
+        weight_sums = contact_block.sum(axis=1)
+        has_contact = weight_sums > 0
+        if not has_contact.any():
+            return 0.0
+        pae_block = pae[r_start:ri_end, s_start:si_end].astype(np.float64)
+        tm_vals = np.where(contact_block, 1.0 / (1.0 + (pae_block ** 2) / d0sq), 0.0)
+        scores = tm_vals[has_contact].sum(axis=1) / weight_sums[has_contact]
+        return float(scores.max())
 
-    # Residues in chain J against chain I
-    for r in range(sj, ej):
-        weight_sum = 0
-        for s in range(si, ei):
-            if r < n_use and s < n_use and contact[r, s]:
-                weight_sum += 1
-        if weight_sum == 0:
-            continue
-        score = 0.0
-        for s in range(si, ei):
-            if r < n_use and s < n_use and contact[r, s]:
-                p = pae[r, s] if r < pae.shape[0] and s < pae.shape[1] else 31.0
-                score += (1.0 / (1.0 + (p * p) / d0sq)) / weight_sum
-        if score > max_score:
-            max_score = score
-
-    return max_score
+    return max(_actifptm_one_direction(si, ei, sj, ej),
+               _actifptm_one_direction(sj, ej, si, ei))
 
 
 # ============================================================================
@@ -1320,43 +1292,52 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             si, ei = int(starts[i]), int(min(cum_sum[i], n_total))
             sj, ej = int(starts[j]), int(min(cum_sum[j], n_total))
 
-            lis_sum = 0.0
-            lis_count_avg = 0
-            clis_sum = 0.0
-            clis_count_avg = 0
-            lis_count_ab = 0
-            lis_count_ba = 0
-            clis_count_ab = 0
-            clis_count_ba = 0
-            lir_i = set()
-            lir_j = set()
-            clir_i = set()
-            clir_j = set()
+            # Vectorized LIS/cLIS computation
+            t_block = transformed[si:ei, sj:ej]
+            t_pos = t_block > 0
 
-            for ri in range(si, ei):
-                for rj in range(sj, ej):
-                    tv = transformed[ri, rj] if ri < n_total and rj < n_total else 0.0
-                    if tv > 0:
-                        lis_sum += tv
-                        lis_count_avg += 1
-                        lir_i.add(ri - si + 1)
-                        lir_j.add(rj - sj + 1)
-                        if ri < n_use and rj < n_use and contact[ri, rj]:
-                            clis_sum += tv
-                            clis_count_avg += 1
-                            clir_i.add(ri - si + 1)
-                            clir_j.add(rj - sj + 1)
+            lis_sum = float(t_block[t_pos].sum())
+            lis_count_avg = int(t_pos.sum())
 
-                    if ri < pae.shape[0] and rj < pae.shape[1]:
-                        if pae[ri, rj] < pae_cutoff:
-                            lis_count_ab += 1
-                        if pae[rj, ri] < pae_cutoff:
-                            lis_count_ba += 1
-                        if ri < n_use and rj < n_use and contact[ri, rj]:
-                            if pae[ri, rj] < pae_cutoff:
-                                clis_count_ab += 1
-                            if pae[rj, ri] < pae_cutoff:
-                                clis_count_ba += 1
+            # LIR: residues with at least one positive transformed value
+            lir_i_mask = t_pos.any(axis=1)
+            lir_j_mask = t_pos.any(axis=0)
+            lir_i = set(np.where(lir_i_mask)[0] + 1)
+            lir_j = set(np.where(lir_j_mask)[0] + 1)
+
+            # Contact-weighted (cLIS)
+            c_ei = min(ei, n_use)
+            c_ej = min(ej, n_use)
+            c_si = si
+            c_sj = sj
+            if c_ei > c_si and c_ej > c_sj:
+                contact_block = contact[c_si:c_ei, c_sj:c_ej].astype(bool)
+                t_contact = t_block[:c_ei-c_si, :c_ej-c_sj]
+                ct_pos = t_pos[:c_ei-c_si, :c_ej-c_sj] & contact_block
+                clis_sum = float(t_contact[ct_pos].sum())
+                clis_count_avg = int(ct_pos.sum())
+                clir_i = set(np.where(ct_pos.any(axis=1))[0] + 1)
+                clir_j = set(np.where(ct_pos.any(axis=0))[0] + 1)
+            else:
+                clis_sum = 0.0
+                clis_count_avg = 0
+                clir_i = set()
+                clir_j = set()
+
+            # LIA counts (asymmetric PAE < cutoff)
+            pae_ij = pae[si:ei, sj:ej]
+            pae_ji = pae[sj:ej, si:ei]
+            lis_count_ab = int((pae_ij < pae_cutoff).sum())
+            lis_count_ba = int((pae_ji < pae_cutoff).sum())
+
+            if c_ei > c_si and c_ej > c_sj:
+                pae_ij_c = pae_ij[:c_ei-c_si, :c_ej-c_sj]
+                pae_ji_c = pae_ji[:c_ej-c_sj, :c_ei-c_si]
+                clis_count_ab = int(((pae_ij_c < pae_cutoff) & contact_block).sum())
+                clis_count_ba = int(((pae_ji_c < pae_cutoff) & contact_block.T).sum())
+            else:
+                clis_count_ab = 0
+                clis_count_ba = 0
 
             lis_val = lis_sum / lis_count_avg if lis_count_avg > 0 else 0.0
             clis_val = clis_sum / clis_count_avg if clis_count_avg > 0 else 0.0
