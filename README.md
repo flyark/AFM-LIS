@@ -5,7 +5,7 @@ This repository provides tools to calculate the Local Interaction Score (LIS) fr
 **Supports:** AlphaFold3, ColabFold/AlphaFold-Multimer, Boltz, Chai-1, OpenFold3
 
 The framework includes two validated approaches:
-- **iLIS (integrated Local Interaction Score)**: Our newest, robust **single metric** that combines interface confidence with a direct physical contact filter. This is the recommended score for most analyses. ([Kim et al., 2025](https://www.biorxiv.org/content/10.1101/2025.10.10.681672))
+- **iLIS (integrated Local Interaction Score)**: Our newest, robust **single metric** that combines interface confidence with a direct physical contact filter. This is the recommended score for most analyses. ([Kim et al., 2026](https://doi.org/10.64898/2026.04.14.718529))
 - **LIS + LIA (Local Interaction Score + Area)**: Our original dual-metric system that evaluates interactions by assessing both the _score_ (LIS) and the _area_ (LIA) of the predicted interface. ([Kim et al., 2024](https://www.biorxiv.org/content/10.1101/2024.02.19.580970v1))
 
 
@@ -16,9 +16,9 @@ The iLIS framework identifies the high-confidence local interface, filters it fo
 
 **Schematic of the iLIS calculation and benchmark data**.
 
-<img width="948" height="395" alt="image" src="https://github.com/user-attachments/assets/832cbf18-46af-4e33-83b4-6cdfcca1df8b" />
+<img alt="iLIS Figure 1 from FlyPredictome paper" src="Figure1_FlyPredictome.svg" />
 
-> **Figure 1A-D** from [Kim et al., 2025](https://www.biorxiv.org/content/10.1101/2025.10.10.681672). iLIS outperforms existing metrics for global structure evaluation particularly for flexible protein complexes (low pLDDT groups).
+> **Figure 1** from [Kim et al., 2026](https://doi.org/10.64898/2026.04.14.718529). **(A)** iLIS calculation scheme: the Local Interaction Area (LIA) Map is filtered by direct contacts (cLIA Map), and LIS and cLIS are combined as iLIS = √(LIS × cLIS). **(B–I)** iLIS effectively identifies positive interactions across multiple *Drosophila* PPI datasets (FlyBI Y2H, DPiM AP-MS, DPiM2 AP-MS, Literature), and is particularly informative for flexible protein complexes (low pLDDT groups).
 
 
 
@@ -36,7 +36,7 @@ However, `LIS` _by itself_ had a potential failure mode: it could assign a high 
 
 ### 2. The New Metric: iLIS (integrated LIS) ###
 
-The new **iLIS** metric (2025) streamlines this process into a single, more robust score. It was designed to solve the same problem by directly integrating a physical contact filter.
+The new **iLIS** metric streamlines this process into a single, more robust score. It was designed to solve the same problem by directly integrating a physical contact filter.
 
 iLIS is calculated as the geometric mean of two components:
 - **LIS (Local Interaction Score)**: The same as the original metric; measures the average confidence of the broad LIA (PAE ≤ 12 Å).
@@ -57,13 +57,13 @@ This use of a geometric mean is critical. If no direct physical contacts are con
 
 We provide two validated frameworks for analysis. **iLIS is the recommended single-metric approach**.
 
-### 1. Recommended: iLIS Framework (Kim et al., 2025) ###
+### 1. Recommended: iLIS Framework (Kim et al., 2026) ###
 
 A high-confidence interaction is suggested if:
 
 - **iLIS ≥ 0.223**
 
-This threshold was established using large-scale Y2H reference sets used in yeast (Yu et al., 2008), fly (Tang et al., 2023), and human (Braun et al., 2009). Please see the details in the supplementary text in [Kim et al., 2025](https://www.biorxiv.org/content/10.1101/2025.10.10.681672).
+This threshold was established using large-scale Y2H reference sets used in yeast (Yu et al., 2008), fly (Tang et al., 2023), and human (Braun et al., 2009). Please see the details in [Kim et al., 2026](https://doi.org/10.64898/2026.04.14.718529).
 
 ### 2. Original: LIS + LIA Framework (Kim et al., 2024) ###
 
@@ -160,7 +160,7 @@ For `lis.py`:
 ## How to Cite
 
 If you use this work, please cite the relevant paper:
-- **For the iLIS metric (Recommended)**: Kim et al (2025). A Structure-Guided Kinase-Transcription Factor Interactome Atlas Reveals Docking Landscapes of the Kinome. _bioRxiv_ ([link](https://www.biorxiv.org/content/10.1101/2025.10.10.681672))
+- **For the iLIS metric (Recommended)**: Kim et al (2026). FlyPredictome: a structural atlas of predicted protein-protein interactions in _Drosophila_. _bioRxiv_ ([link](https://doi.org/10.64898/2026.04.14.718529))
 - **For the original LIS + LIA framework**: Kim et al (2024). Enhanced Protein-Protein Interaction Discovery via AlphaFold-Multimer. _bioRxiv_ ([link](https://www.biorxiv.org/content/10.1101/2024.02.19.580970v1))
 
 
@@ -168,7 +168,7 @@ If you use this work, please cite the relevant paper:
 
 Large-scale AlphaFold-Multimer PPI predictions in *Drosophila*, scored with the LIS framework:
 - **[www.flyrnai.org/tools/fly_predictome/web/](https://www.flyrnai.org/tools/fly_predictome/web/)**
-- Now covers **>1.7 million** PPI predictions.
+- Now covers **>1.5 million** PPI predictions.
 
 
 ## Declaration of Generative AI Usage
