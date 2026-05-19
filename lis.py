@@ -1544,34 +1544,46 @@ def format_row(name, rank, struct_file, pair):
 # ============================================================================
 
 def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False):
-    """Process a single model. Returns (name, rank, rows, error_msg) tuple."""
+    """Process a single model. Returns (name, rank, rows, error_msg) tuple.
+
+    Any unexpected exception (corrupt gz, truncated file, unreadable JSON, etc.)
+    is captured and returned as err_msg so one bad prediction doesn't kill the
+    whole batch.
+    """
     name, rank, model_label, struct_path, pae_path, scores_path, fmt = model_tuple
 
-    struct_text = read_fn(struct_path)
-    if not struct_text or not isinstance(struct_text, str):
-        return name, rank, None, f'structure file unreadable: {struct_path}'
-
-    pae = extract_pae(pae_path, read_fn)
-    if pae is None:
-        return name, rank, None, f'PAE not found or unreadable: {pae_path}'
-    pae = np.nan_to_num(pae, nan=31.0)
-
-    scores = extract_confidence_scores(scores_path, read_fn)
-    if scores_path != pae_path and pae_path:
-        full_scores = extract_confidence_scores(pae_path, read_fn)
-        for k, v in full_scores.items():
-            if k not in scores:
-                scores[k] = v
-
     try:
-        pairs = analyze_single_model(
-            struct_text, pae, scores, fmt, detected,
-            pae_path, read_fn, pae_cutoff, cb_cutoff)
-    except Exception as e:
-        return name, rank, None, f'analysis error: {e}'
+        struct_text = read_fn(struct_path)
+        if not struct_text or not isinstance(struct_text, str):
+            return name, rank, None, f'structure file unreadable: {struct_path}'
 
-    rows = [format_row(name, rank, model_label, pair) for pair in pairs]
-    return name, rank, rows, None
+        pae = extract_pae(pae_path, read_fn)
+        if pae is None:
+            return name, rank, None, f'PAE not found or unreadable: {pae_path}'
+        pae = np.nan_to_num(pae, nan=31.0)
+
+        scores = extract_confidence_scores(scores_path, read_fn)
+        if scores_path != pae_path and pae_path:
+            full_scores = extract_confidence_scores(pae_path, read_fn)
+            for k, v in full_scores.items():
+                if k not in scores:
+                    scores[k] = v
+
+        try:
+            pairs = analyze_single_model(
+                struct_text, pae, scores, fmt, detected,
+                pae_path, read_fn, pae_cutoff, cb_cutoff)
+        except Exception as e:
+            return name, rank, None, f'analysis error: {e}'
+
+        rows = [format_row(name, rank, model_label, pair) for pair in pairs]
+        return name, rank, rows, None
+    except EOFError as e:
+        return name, rank, None, f'corrupt gz (EOFError): {pae_path}: {e}'
+    except (OSError, zipfile.BadZipFile) as e:
+        return name, rank, None, f'I/O error reading {pae_path}: {type(e).__name__}: {e}'
+    except Exception as e:
+        return name, rank, None, f'unexpected error on {pae_path}: {type(e).__name__}: {e}'
 
 
 def _process_one_sequential(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False):
@@ -1717,8 +1729,11 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
         bar = '█' * filled + '░' * (bar_len - filled)
         status = 'OK' if ok else 'FAIL'
         print(f'\r[LIS] {bar} {pct}% ({n}/{total}) {elapsed_str} elapsed, ETA {eta_str} | {name} {status}      ', end='', flush=True)
-        if not ok and err_msg and verbose:
-            print(f'\n      >> {err_msg}', flush=True)
+        if not ok and err_msg:
+            # Always surface failures so the bad-file path lands in the log,
+            # not just under --verbose. Goes to stderr so it's visible even
+            # when stdout is captured by a progress collector.
+            print(f'\n[LIS] FAIL {name} rank={rank}: {err_msg}', file=sys.stderr, flush=True)
 
     # Check if input is a folder (needed for multiprocessing — zip read_fn can't be pickled)
     is_folder = os.path.isdir(path)
