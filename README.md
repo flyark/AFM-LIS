@@ -120,6 +120,38 @@ For visual analysis with no installation required:
 - All analysis runs locally in your browser — no data leaves your device
 - [Step-by-step tutorial](https://flyark.github.io/LIVIA/tutorials.html) · [GitHub](https://github.com/flyark/LIVIA)
 
+### Batch Visualization: `lis_to_cxc.py` (ChimeraX scripts from `lis.py` output)
+
+For large screens, generate per-fold ChimeraX `.cxc` scripts directly from a `lis.py` CSV — no web tool needed.
+
+```bash
+# 1. Score a prediction
+python lis.py prediction.zip -o results_lis_analysis.csv
+
+# 2. Generate ChimeraX visualizations
+python lis_to_cxc.py \
+    --csv results_lis_analysis.csv \
+    --pdb-root . \
+    --out cxc/
+
+# 3. Open any cxc in ChimeraX (double-click)
+```
+
+Each `.cxc` opens the predicted structure in ChimeraX with:
+- **LIR** residues colored in a light shade (per-chain palette)
+- **cLIR** residues colored in the full shade
+- A 2D label panel showing iLIS, cLIS, ranks, and LIR residues per chain (aggregated boundary)
+
+Common flags: `--ilis-cutoff` (default `0.223`), `--top-n`, `--pairs A,B`, `--pairs-file`, `--metadata`, `--plddt`, `--palette`. Full help: `python lis_to_cxc.py --help`.
+
+**Tip — figure generation for papers/slides.** After opening a `.cxc` in ChimeraX and orienting the view, save a transparent-background PNG with:
+
+```
+save myfigure.png transparentBackground true
+```
+
+The same command is included as a commented suggestion at the bottom of every emitted `.cxc` file.
+
 
 ## Output CSV Columns
 
