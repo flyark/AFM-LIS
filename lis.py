@@ -357,24 +357,27 @@ def _find_colabfold(filenames, basenames_map):
         # Use the full PDB filename as the model identifier
         model_str = base
 
-        # Find matching scores file (must match same prefix)
+        # Find matching scores file. Require the prefix to be followed by
+        # '_scores_' so we don't grab a longer prediction's file when one
+        # name is a prefix of another (e.g. AAA___BBB vs AAA___BBB___CCC).
         scores_path = None
         padded = rank.zfill(3)
+        scores_prefix = prefix + '_scores_'
         for fn in filenames:
             fb = os.path.basename(fn)
-            if fb.startswith(prefix) and '_scores_rank_' in fb and f'rank_{padded}' in fb and fb.endswith('.json'):
+            if fb.startswith(scores_prefix) and f'rank_{padded}' in fb and fb.endswith('.json'):
                 scores_path = fn
                 break
         if not scores_path:
             for fn in filenames:
                 fb = os.path.basename(fn)
-                if fb.startswith(prefix) and 'scores' in fb and f'rank_{rank}' in fb and fb.endswith('.json'):
+                if fb.startswith(scores_prefix) and f'rank_{rank}' in fb and fb.endswith('.json'):
                     scores_path = fn
                     break
         if not scores_path:
             for fn in filenames:
                 fb = os.path.basename(fn)
-                if fb.startswith(prefix) and 'scores' in fb and fb.endswith('.json'):
+                if fb.startswith(scores_prefix) and fb.endswith('.json'):
                     scores_path = fn
                     break
 
@@ -1061,15 +1064,16 @@ def compute_contact_map(coords, threshold=8):
 # ============================================================================
 
 def transform_pae_matrix(pae, pae_cutoff=12):
-    """Symmetrize and transform PAE to confidence scores.
+    """Transform PAE to confidence scores. Asymmetric, per-direction.
 
-    Symmetrization: (PAE[i,j] + PAE[j,i]) / 2
-    Transform: confidence = 1 - PAE/cutoff if PAE < cutoff, else 0
+    Per-direction LIS = 1 - mean(PAE<cutoff)/cutoff is recovered by leaving
+    PAE[i,j] and PAE[j,i] independent. The (i,j) and (j,i) chain-pair entries
+    are then averaged downstream in analyze_single_model's symmetrize step.
     """
-    sym = (pae + pae.T) / 2.0
-    transformed = np.zeros_like(sym)
-    mask = sym < pae_cutoff
-    transformed[mask] = 1.0 - sym[mask] / pae_cutoff
+    pae = np.asarray(pae, dtype=np.float64)
+    transformed = np.zeros_like(pae)
+    mask = pae < pae_cutoff
+    transformed[mask] = 1.0 - pae[mask] / pae_cutoff
     return transformed
 
 
@@ -1258,7 +1262,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
     cum_sum = np.cumsum(sizes)
     starts = np.concatenate(([0], cum_sum[:-1]))
 
-    # Build transformed confidence map (symmetrized PAE)
+    # Build transformed confidence map (asymmetric PAE, per-direction)
     transformed = transform_pae_matrix(pae[:n_total, :n_total], pae_cutoff)
 
     # Contact map + distance matrix
@@ -1292,18 +1296,19 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             si, ei = int(starts[i]), int(min(cum_sum[i], n_total))
             sj, ej = int(starts[j]), int(min(cum_sum[j], n_total))
 
-            # Vectorized LIS/cLIS computation
+            # Vectorized LIS/cLIS computation (transformed is asymmetric per-direction)
             t_block = transformed[si:ei, sj:ej]
             t_pos = t_block > 0
 
             lis_sum = float(t_block[t_pos].sum())
             lis_count_avg = int(t_pos.sum())
 
-            # LIR: residues with at least one positive transformed value
-            lir_i_mask = t_pos.any(axis=1)
-            lir_j_mask = t_pos.any(axis=0)
-            lir_i = set(np.where(lir_i_mask)[0] + 1)
-            lir_j = set(np.where(lir_j_mask)[0] + 1)
+            # LIR: cell-based union — a residue is in LIR if either direction is confident
+            # on any of its cells (paired across the block's row/col).
+            t_block_rev = transformed[sj:ej, si:ei]
+            either_pos = t_pos | (t_block_rev.T > 0)
+            lir_i = set(np.where(either_pos.any(axis=1))[0] + 1)
+            lir_j = set(np.where(either_pos.any(axis=0))[0] + 1)
 
             # Contact-weighted (cLIS)
             c_ei = min(ei, n_use)
@@ -1316,8 +1321,10 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 ct_pos = t_pos[:c_ei-c_si, :c_ej-c_sj] & contact_block
                 clis_sum = float(t_contact[ct_pos].sum())
                 clis_count_avg = int(ct_pos.sum())
-                clir_i = set(np.where(ct_pos.any(axis=1))[0] + 1)
-                clir_j = set(np.where(ct_pos.any(axis=0))[0] + 1)
+                # cLIR: cell-based union + contact
+                either_contact = either_pos[:c_ei-c_si, :c_ej-c_sj] & contact_block
+                clir_i = set(np.where(either_contact.any(axis=1))[0] + 1)
+                clir_j = set(np.where(either_contact.any(axis=0))[0] + 1)
             else:
                 clis_sum = 0.0
                 clis_count_avg = 0
@@ -1427,11 +1434,15 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'ipTM': (val['ipTM'] + rv['ipTM']) / 2,
                 'ipSAE': max(val['ipSAE'], rv['ipSAE']),
                 'actifpTM': max(val['actifpTM'], rv['actifpTM']),
-                'LIA': val['LIA'] + rv['LIA'],
-                'cLIA': val['cLIA'] + rv['cLIA'],
+                # val['LIA'] already covers both AB and BA directions, so no extra sum
+                'LIA': val['LIA'],
+                'cLIA': val['cLIA'],
                 'lenI': val['lenI'], 'lenJ': val['lenJ'],
-                'lirI': val['lirI'], 'lirJ': rv['lirI'],
-                'clirI': val['clirI'], 'clirJ': rv['clirI'],
+                # chain-preserved cell-based union — every LIR_A residue has a paired LIR_B
+                'lirI': val['lirI'] | rv['lirJ'],
+                'lirJ': val['lirJ'] | rv['lirI'],
+                'clirI': val['clirI'] | rv['clirJ'],
+                'clirJ': val['clirJ'] | rv['clirI'],
                 'LIpLDDT_i': val['LIpLDDT_i'], 'LIpLDDT_j': rv['LIpLDDT_i'],
                 'cLIpLDDT_i': val['cLIpLDDT_i'], 'cLIpLDDT_j': rv['cLIpLDDT_i'],
             }
