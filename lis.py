@@ -277,6 +277,13 @@ def detect_platform(filenames, read_fn):
     if has_af3_model and has_af3_summary and has_af3_full:
         return 'alphafold3'
 
+    # Protenix-v2: *_sample_N.cif + *_summary_confidence_sample_N.json + *_full_data_sample_N.json
+    has_prot_model = any(re.search(r'_sample_\d+\.cif$', b) for b in basenames)
+    has_prot_summary = any(re.search(r'_summary_confidence_sample_\d+\.json$', b) for b in basenames)
+    has_prot_full = any(re.search(r'_full_data_sample_\d+\.json$', b) for b in basenames)
+    if has_prot_model and has_prot_summary and has_prot_full:
+        return 'alphafold3'  # use the AF3 discovery path; _find_af3 handles the Protenix layout
+
     # AF3 Server output: seed-N_sample-M/model.cif + seed-N_sample-M/confidences.json
     has_server_model = any(re.search(r'seed-\d+_sample-\d+/model\.cif$', f) for f in filenames)
     has_server_conf = any(re.search(r'seed-\d+_sample-\d+/confidences\.json$', f) for f in filenames)
@@ -388,6 +395,7 @@ def _find_colabfold(filenames, basenames_map):
 def _find_af3(filenames, basenames_map):
     """AlphaFold3 standard: *_model_N.cif + *_full_data_N.json + *_summary_confidences_N.json
     Tamarind AF3: result_sample_N_model.pdb + result_sample_N_confidences.json
+    Protenix-v2: *_sample_N.cif + *_full_data_sample_N.json + *_summary_confidence_sample_N.json
     """
     # Standard AF3
     for name in filenames:
@@ -399,6 +407,20 @@ def _find_af3(filenames, basenames_map):
         idx = m.group(2)
         full_data = basenames_map.get(f'{prefix}_full_data_{idx}.json')
         summary = basenames_map.get(f'{prefix}_summary_confidences_{idx}.json')
+        if not full_data or not summary:
+            continue
+        yield (prefix, idx, os.path.basename(name), name, full_data, summary, 'cif')
+
+    # Protenix-v2 (AF3-like layout, slightly different basenames)
+    for name in filenames:
+        base = os.path.basename(name)
+        m = re.match(r'^(.+)_sample_(\d+)\.cif$', base)
+        if not m:
+            continue
+        prefix = m.group(1)
+        idx = m.group(2)
+        full_data = basenames_map.get(f'{prefix}_full_data_sample_{idx}.json')
+        summary = basenames_map.get(f'{prefix}_summary_confidence_sample_{idx}.json')
         if not full_data or not summary:
             continue
         yield (prefix, idx, os.path.basename(name), name, full_data, summary, 'cif')
@@ -656,6 +678,12 @@ def extract_pae(pae_source, read_fn):
         n = int(round(math.sqrt(len(pde))))
         if n * n == len(pde):
             return np.array(pde, dtype=np.float32).reshape(n, n)
+
+    # Protenix-v2: token_pair_pae (also exposes token_pair_pde + contact_probs)
+    if 'token_pair_pae' in data and isinstance(data['token_pair_pae'], list):
+        pae = data['token_pair_pae']
+        if isinstance(pae[0], list):
+            return np.array(pae, dtype=np.float32)
 
     return None
 
