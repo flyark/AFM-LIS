@@ -309,6 +309,12 @@ def detect_platform(filenames, read_fn):
     if has_chai_model or (has_chai_scores and any(b.startswith('pred.') for b in basenames)):
         return 'chai'
 
+    # ESMFold2 (biohub API): *_model.pdb + *_pae.json
+    has_esm_model = any(re.search(r'_model\.pdb$', b) for b in basenames)
+    has_esm_pae = any(re.search(r'_pae\.json$', b) for b in basenames)
+    if has_esm_model and has_esm_pae:
+        return 'esmfold2'
+
     return 'generic'
 
 
@@ -341,6 +347,8 @@ def find_models(filenames, platform, read_fn):
         yield from _find_colabfold(filenames, basenames_map)
     elif platform in ('alphafold3', 'openfold3'):
         yield from _find_af3(filenames, basenames_map)
+    elif platform == 'esmfold2':
+        yield from _find_esmfold2(filenames, basenames_map)
     elif platform == 'boltz':
         yield from _find_boltz(filenames, basenames_map)
     elif platform == 'chai':
@@ -557,6 +565,21 @@ def _find_chai(filenames, basenames_map):
 
         pred_name = _get_toplevel_name(name) or 'prediction'
         yield (pred_name, rank_or_idx, base, name, pae_path or score_path, score_path, 'cif')
+
+
+def _find_esmfold2(filenames, basenames_map):
+    """ESMFold2 (biohub API): single model — *_model.pdb + *_pae.json"""
+    for name in filenames:
+        base = os.path.basename(name)
+        m = re.match(r'^(.+)_model\.pdb$', base)
+        if not m:
+            continue
+        prefix = m.group(1)
+        pae_path = basenames_map.get(f'{prefix}_pae.json')
+        if not pae_path:
+            continue
+        # PAE JSON also carries ptm/iptm/plddt → use it as the confidence source too
+        yield (prefix, '0', os.path.basename(name), name, pae_path, pae_path, 'pdb')
 
 
 def _find_generic(filenames, basenames_map):
