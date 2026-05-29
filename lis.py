@@ -315,10 +315,18 @@ def detect_platform(filenames, read_fn):
     if has_esm_model and has_esm_pae:
         return 'esmfold2'
 
-    # ESMFold2 native (folder-per-pair): complex.pdb + pae.npy + metrics.json
-    if (any(os.path.basename(f) == 'pae.npy' for f in filenames)
-            and any(os.path.basename(f) == 'complex.pdb' for f in filenames)):
-        return 'esmfold2_native'
+    # Folder-per-pair pattern (e.g. ESMFold2 native batch outputs, but the detection is
+    # filename-agnostic — any folder that contains one .pdb/.cif + one .npy is treated as a
+    # single-model prediction with the folder basename as the prediction name).
+    from collections import defaultdict as _dd
+    _by_dir = _dd(list)
+    for _f in filenames:
+        _by_dir[os.path.dirname(_f)].append(os.path.basename(_f))
+    for _d, _names in _by_dir.items():
+        _struct = [n for n in _names if n.endswith('.pdb') or n.endswith('.cif')]
+        _npy    = [n for n in _names if n.endswith('.npy')]
+        if len(_struct) == 1 and len(_npy) == 1:
+            return 'esmfold2_native'
 
     return 'generic'
 
@@ -590,20 +598,33 @@ def _find_esmfold2(filenames, basenames_map):
 
 
 def _find_esmfold2_native(filenames, basenames_map):
-    """ESMFold2 native batch (folder-per-pair):
-       <folder>/{complex.pdb, pae.npy, metrics.json}.
-       Folder name (e.g. '001_GeneA___GeneB') becomes the prediction name."""
-    fset = set(filenames)
-    for name in filenames:
-        if os.path.basename(name) != 'complex.pdb':
+    """Folder-per-pair, filename-agnostic.
+
+    Any folder containing exactly one .pdb/.cif and one .npy is treated as a
+    single-model prediction. An optional .json in the same folder is used as the
+    confidence/scores source. The folder basename becomes the prediction name.
+
+    Examples that all work:
+      <folder>/complex.pdb + pae.npy + metrics.json   (one batch convention)
+      <folder>/result.pdb  + esmfold2_pae.npy         (another)
+      <folder>/prediction.cif + pae.npy               (cif variant)
+    """
+    from collections import defaultdict
+    by_dir = defaultdict(list)
+    for f in filenames:
+        by_dir[os.path.dirname(f)].append(f)
+    for d, files in by_dir.items():
+        struct = [f for f in files if f.endswith('.pdb') or f.endswith('.cif')]
+        npy    = [f for f in files if f.endswith('.npy')]
+        jsons  = [f for f in files if f.endswith('.json')]
+        if len(struct) != 1 or len(npy) != 1:
             continue
-        folder = os.path.dirname(name)
-        pae = (folder + '/pae.npy') if folder else 'pae.npy'
-        scores = (folder + '/metrics.json') if folder else 'metrics.json'
-        if pae not in fset or scores not in fset:
-            continue
-        pred_name = os.path.basename(folder) or 'prediction'
-        yield (pred_name, '0', 'complex.pdb', name, pae, scores, 'pdb')
+        struct_path = struct[0]
+        pae_path = npy[0]
+        scores_path = jsons[0] if len(jsons) == 1 else (jsons[0] if jsons else pae_path)
+        pred_name = os.path.basename(d) or 'prediction'
+        fmt = 'cif' if struct_path.endswith('.cif') else 'pdb'
+        yield (pred_name, '0', os.path.basename(struct_path), struct_path, pae_path, scores_path, fmt)
 
 
 def _find_generic(filenames, basenames_map):
