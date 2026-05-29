@@ -315,6 +315,11 @@ def detect_platform(filenames, read_fn):
     if has_esm_model and has_esm_pae:
         return 'esmfold2'
 
+    # ESMFold2 native (folder-per-pair): complex.pdb + pae.npy + metrics.json
+    if (any(os.path.basename(f) == 'pae.npy' for f in filenames)
+            and any(os.path.basename(f) == 'complex.pdb' for f in filenames)):
+        return 'esmfold2_native'
+
     return 'generic'
 
 
@@ -349,6 +354,8 @@ def find_models(filenames, platform, read_fn):
         yield from _find_af3(filenames, basenames_map)
     elif platform == 'esmfold2':
         yield from _find_esmfold2(filenames, basenames_map)
+    elif platform == 'esmfold2_native':
+        yield from _find_esmfold2_native(filenames, basenames_map)
     elif platform == 'boltz':
         yield from _find_boltz(filenames, basenames_map)
     elif platform == 'chai':
@@ -582,6 +589,23 @@ def _find_esmfold2(filenames, basenames_map):
         yield (prefix, '0', os.path.basename(name), name, pae_path, pae_path, 'pdb')
 
 
+def _find_esmfold2_native(filenames, basenames_map):
+    """ESMFold2 native batch (folder-per-pair):
+       <folder>/{complex.pdb, pae.npy, metrics.json}.
+       Folder name (e.g. '001_GeneA___GeneB') becomes the prediction name."""
+    fset = set(filenames)
+    for name in filenames:
+        if os.path.basename(name) != 'complex.pdb':
+            continue
+        folder = os.path.dirname(name)
+        pae = (folder + '/pae.npy') if folder else 'pae.npy'
+        scores = (folder + '/metrics.json') if folder else 'metrics.json'
+        if pae not in fset or scores not in fset:
+            continue
+        pred_name = os.path.basename(folder) or 'prediction'
+        yield (pred_name, '0', 'complex.pdb', name, pae, scores, 'pdb')
+
+
 def _find_generic(filenames, basenames_map):
     """Generic: any .pdb/.cif + matching .json or .npz"""
     struct_files = sorted(
@@ -741,8 +765,14 @@ def extract_confidence_scores(confidence_path, read_fn):
         scores['pTM'] = _unwrap(data['ptm'])
     if 'iptm' in data:
         scores['ipTM'] = _unwrap(data['iptm'])
+    # ESMFold2 native uses 'interface_ptm' as the global ipTM key
+    if 'interface_ptm' in data and 'ipTM' not in scores:
+        scores['ipTM'] = _unwrap(data['interface_ptm'])
     if 'chain_pair_iptm' in data:
         scores['chainPairIptm'] = data['chain_pair_iptm']
+    # ESMFold2 native uses 'pair_chains_iptm' for the per-chain-pair matrix
+    if 'pair_chains_iptm' in data and 'chainPairIptm' not in scores:
+        scores['chainPairIptm'] = data['pair_chains_iptm']
     if 'atom_plddts' in data:
         plddts = data['atom_plddts']
         scores['pLDDT'] = sum(plddts) / len(plddts) if plddts else 0
@@ -1069,6 +1099,13 @@ def parse_bfactors_per_residue(text, fmt):
                 except ValueError:
                     continue
                 bfactors[f'{chain}:{rn}'] = bf
+
+    # Auto-scale 0–1 pLDDT to 0–100 (e.g. ESMFold2 native PDB stores pLDDT on 0–1).
+    # Use max value as a heuristic: AlphaFold/ColabFold use 0–100, ESMFold uses 0–1.
+    if bfactors:
+        mx = max(bfactors.values())
+        if 0 < mx <= 1.0:
+            bfactors = {k: v * 100.0 for k, v in bfactors.items()}
 
     return bfactors
 
