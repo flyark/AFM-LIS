@@ -315,17 +315,23 @@ def detect_platform(filenames, read_fn):
     if has_esm_model and has_esm_pae:
         return 'esmfold2'
 
-    # Folder-per-pair pattern (e.g. ESMFold2 native batch outputs, but the detection is
-    # filename-agnostic — any folder that contains one .pdb/.cif + one .npy is treated as a
-    # single-model prediction with the folder basename as the prediction name).
+    # Folder-per-pair pattern (filename-agnostic, format-flexible). Any folder that
+    # contains at least one structure file (.pdb / .cif / .pdb.gz / .cif.gz / .pdb.xz /
+    # .cif.xz) AND at least one PAE-style array file (.npy / .npz) is treated as a
+    # single-model prediction. An optional .json carries the scores. The folder
+    # basename becomes the prediction name. Mixed redundancy (e.g. both .pdb AND
+    # .pdb.gz in the same folder) is fine — _find_esmfold2_native picks one by
+    # priority (uncompressed > compressed, .npy > .npz).
     from collections import defaultdict as _dd
     _by_dir = _dd(list)
     for _f in filenames:
         _by_dir[os.path.dirname(_f)].append(os.path.basename(_f))
+    _STRUCT_EXTS = ('.pdb', '.cif', '.pdb.gz', '.cif.gz', '.pdb.xz', '.cif.xz')
+    _PAE_EXTS = ('.npy', '.npz')
     for _d, _names in _by_dir.items():
-        _struct = [n for n in _names if n.endswith('.pdb') or n.endswith('.cif')]
-        _npy    = [n for n in _names if n.endswith('.npy')]
-        if len(_struct) == 1 and len(_npy) == 1:
+        _has_struct = any(n.endswith(_STRUCT_EXTS) for n in _names)
+        _has_pae    = any(n.endswith(_PAE_EXTS) for n in _names)
+        if _has_struct and _has_pae:
             return 'esmfold2_native'
 
     return 'generic'
@@ -598,32 +604,49 @@ def _find_esmfold2(filenames, basenames_map):
 
 
 def _find_esmfold2_native(filenames, basenames_map):
-    """Folder-per-pair, filename-agnostic.
+    """Folder-per-pair, filename-agnostic, format-flexible.
 
-    Any folder containing exactly one .pdb/.cif and one .npy is treated as a
-    single-model prediction. An optional .json in the same folder is used as the
-    confidence/scores source. The folder basename becomes the prediction name.
+    Any folder containing at least one structure file and at least one PAE-style
+    array is a single-model prediction. An optional .json in the same folder is
+    used as the confidence/scores source. The folder basename becomes the name.
+
+    Accepted formats (uncompressed preferred over compressed when both exist):
+      structure: .pdb, .cif, .pdb.gz, .cif.gz, .pdb.xz, .cif.xz
+      PAE:       .npy, .npz   (.npy preferred — direct array)
 
     Examples that all work:
-      <folder>/complex.pdb + pae.npy + metrics.json   (one batch convention)
-      <folder>/result.pdb  + esmfold2_pae.npy         (another)
-      <folder>/prediction.cif + pae.npy               (cif variant)
+      <folder>/complex.pdb + pae.npy + metrics.json
+      <folder>/result.pdb.gz + pae.npz + scores.json
+      <folder>/prediction.cif + pae.npy
+      <folder>/{complex.pdb, complex.pdb.gz, pae.npy}  -> pdb is used, gz ignored
     """
     from collections import defaultdict
     by_dir = defaultdict(list)
     for f in filenames:
         by_dir[os.path.dirname(f)].append(f)
+
+    # Priority order: earlier in the list wins
+    struct_priority = ('.pdb', '.cif', '.pdb.gz', '.cif.gz', '.pdb.xz', '.cif.xz')
+    pae_priority = ('.npy', '.npz')
+
+    def pick_by_ext(files, exts):
+        """Return the first file whose basename ends with any of the priority exts."""
+        for ext in exts:
+            for f in files:
+                if os.path.basename(f).endswith(ext):
+                    return f
+        return None
+
     for d, files in by_dir.items():
-        struct = [f for f in files if f.endswith('.pdb') or f.endswith('.cif')]
-        npy    = [f for f in files if f.endswith('.npy')]
-        jsons  = [f for f in files if f.endswith('.json')]
-        if len(struct) != 1 or len(npy) != 1:
+        struct_path = pick_by_ext(files, struct_priority)
+        pae_path = pick_by_ext(files, pae_priority)
+        if not struct_path or not pae_path:
             continue
-        struct_path = struct[0]
-        pae_path = npy[0]
-        scores_path = jsons[0] if len(jsons) == 1 else (jsons[0] if jsons else pae_path)
+        jsons = [f for f in files if f.endswith('.json')]
+        scores_path = jsons[0] if jsons else pae_path
         pred_name = os.path.basename(d) or 'prediction'
-        fmt = 'cif' if struct_path.endswith('.cif') else 'pdb'
+        base_struct = os.path.basename(struct_path).lower()
+        fmt = 'cif' if ('.cif' in base_struct) else 'pdb'
         yield (pred_name, '0', os.path.basename(struct_path), struct_path, pae_path, scores_path, fmt)
 
 
