@@ -606,15 +606,22 @@ def _find_esmfold2(filenames, basenames_map):
 def _find_esmfold2_native(filenames, basenames_map):
     """Folder-per-pair (and optionally per-sample-within-pair).
 
-    Any folder containing structure(s) + PAE(s) is a prediction set.
-    Single-sample case: 1 structure + 1 PAE [+1 json] → 1 model.
-    Multi-sample case (ensemble in one folder, e.g. complex_s1.pdb.gz +
-      pae_s1.npz + metrics_s1.json × N) → N models matched by sample-ID
-      suffix (the last `_<token>` before extensions).
+    Naming is fully agnostic: a folder is a prediction set whenever it contains
+    one or more structure files and one or more PAE files. Multi-sample matching
+    uses the longest-common-prefix trick — whatever prefix is shared by all
+    struct stems is treated as common, and the remaining suffix is the sample ID.
+    The same is done for PAE stems and JSON stems. IDs that appear in both
+    struct- and PAE-sets are paired. This handles cases like:
+
+      complex_s1.pdb.gz + pae_s1.npz + metrics_s1.json       (suffix _s1)
+      model_1.pdb + pae_1.npz + scores_1.json                (suffix _1)
+      protein_pair_0.pdb + pae_0.npy + scores_0.json         (mixed prefixes)
+      Fsn___SkpB_0.pdb + Fsn___SkpB_0.npz + Fsn___SkpB_0.json
+      model1.pdb + pae1.npz                                  (no underscore)
 
     Accepted structure formats: .pdb, .cif, .pdb.gz, .cif.gz, .pdb.xz, .cif.xz
     Accepted PAE formats:       .npy, .npz   (.npy preferred — direct array)
-    For each struct/PAE/json candidate, uncompressed wins over compressed if
+    For each struct/PAE/json candidate, uncompressed wins over compressed when
     both exist for the same sample ID.
     """
     import re
@@ -630,17 +637,34 @@ def _find_esmfold2_native(filenames, basenames_map):
     def stem(path):
         return EXT_STRIP_RX.sub('', os.path.basename(path))
 
-    def sample_id(s):
-        m = re.search(r'_([A-Za-z0-9]+)$', s)
-        return m.group(1) if m else ''
+    def longest_common_prefix(strs):
+        if not strs:
+            return ''
+        s1, s2 = min(strs), max(strs)
+        i = 0
+        while i < len(s1) and i < len(s2) and s1[i] == s2[i]:
+            i += 1
+        return s1[:i]
+
+    def ids_by_lcp(files):
+        """Return {sample_id: file} where sample_id = stem - common_prefix.
+        With 1 file, sample_id is '' (treated as a single-model marker)."""
+        stems = [stem(f) for f in files]
+        if len(files) == 1:
+            return {'': files[0]}
+        pref = longest_common_prefix(stems)
+        out = {}
+        for f, st in zip(files, stems):
+            sid = st[len(pref):].lstrip('_-.')  # trim common leading separators
+            out[sid] = f
+        return out
 
     def struct_priority_key(p):
         b = os.path.basename(p).lower()
-        # uncompressed wins
-        return (0 if not (b.endswith('.gz') or b.endswith('.xz')) else 1)
+        return 0 if not (b.endswith('.gz') or b.endswith('.xz')) else 1
 
     def pae_priority_key(p):
-        return (0 if p.lower().endswith('.npy') else 1)
+        return 0 if p.lower().endswith('.npy') else 1
 
     for d, files in by_dir.items():
         struct_files = [f for f in files if STRUCT_EXT_RX.search(os.path.basename(f))]
@@ -651,42 +675,42 @@ def _find_esmfold2_native(filenames, basenames_map):
 
         pred_name = os.path.basename(d) or 'prediction'
 
-        # Group struct files by sample ID; the dominant ID set drives the matching
-        struct_by_id = defaultdict(list)
-        for s in struct_files:
-            struct_by_id[sample_id(stem(s))].append(s)
+        # Pre-sort by priority so duplicates resolve cleanly
+        struct_files = sorted(struct_files, key=struct_priority_key)
+        pae_files = sorted(pae_files, key=pae_priority_key)
 
-        # Single-model fallback: only one struct in the folder, no sample-id matching
-        if len(struct_files) == 1:
-            sp = sorted(struct_files, key=struct_priority_key)[0]
-            pp = sorted(pae_files, key=pae_priority_key)[0]
+        # If only one struct or one PAE, treat as single-model
+        if len(struct_files) == 1 or len(pae_files) == 1:
+            sp = struct_files[0]
+            pp = pae_files[0]
             jp = json_files[0] if json_files else pp
             fmt = 'cif' if '.cif' in os.path.basename(sp).lower() else 'pdb'
             yield (pred_name, '0', os.path.basename(sp), sp, pp, jp, fmt)
             continue
 
-        # Multi-model: match by sample ID
-        any_yield = False
-        for sid, sgroup in struct_by_id.items():
-            sp = sorted(sgroup, key=struct_priority_key)[0]
-            pae_match = [p for p in pae_files if sample_id(stem(p)) == sid] if sid else pae_files
-            if not pae_match:
-                continue
-            pp = sorted(pae_match, key=pae_priority_key)[0]
-            jmatch = [j for j in json_files if sample_id(stem(j)) == sid] if sid else json_files
-            jp = jmatch[0] if jmatch else (json_files[0] if json_files else pp)
-            fmt = 'cif' if '.cif' in os.path.basename(sp).lower() else 'pdb'
-            rank = sid or '0'
-            any_yield = True
-            yield (pred_name, rank, os.path.basename(sp), sp, pp, jp, fmt)
+        # Multi-sample: derive sample IDs by stripping the longest common prefix
+        # within each file-type group, then pair up matching IDs.
+        struct_ids = ids_by_lcp(struct_files)
+        pae_ids = ids_by_lcp(pae_files)
+        json_ids = ids_by_lcp(json_files) if json_files else {}
 
-        if not any_yield:
-            # Fall back: just pair first struct with first pae
-            sp = sorted(struct_files, key=struct_priority_key)[0]
-            pp = sorted(pae_files, key=pae_priority_key)[0]
+        common = set(struct_ids) & set(pae_ids)
+        if not common:
+            # Could not split by ID — fall back to single pair
+            sp = struct_files[0]
+            pp = pae_files[0]
             jp = json_files[0] if json_files else pp
             fmt = 'cif' if '.cif' in os.path.basename(sp).lower() else 'pdb'
             yield (pred_name, '0', os.path.basename(sp), sp, pp, jp, fmt)
+            continue
+
+        for sid in sorted(common):
+            sp = struct_ids[sid]
+            pp = pae_ids[sid]
+            jp = json_ids.get(sid) or (json_files[0] if json_files else pp)
+            fmt = 'cif' if '.cif' in os.path.basename(sp).lower() else 'pdb'
+            rank = sid or '0'
+            yield (pred_name, rank, os.path.basename(sp), sp, pp, jp, fmt)
 
 
 def _find_generic(filenames, basenames_map):
