@@ -4,7 +4,7 @@ LIS -- Local Interaction Score Analysis (CLI)
 ==============================================
 Calculate LIS/cLIS/iLIS metrics from structure prediction outputs.
 
-Supports: AlphaFold3, ColabFold, Boltz, Chai-1, OpenFold3, Generic
+Supports: AlphaFold3, ColabFold, AlphaPulldown (AF-Multimer), Boltz, Chai-1, OpenFold3, Generic
 Input:    folder or zip file with prediction outputs
 Output:   CSV with one row per model per chain pair
 
@@ -297,6 +297,14 @@ def detect_platform(filenames, read_fn):
     if has_cf_model and has_cf_scores:
         return 'colabfold'
 
+    # AlphaPulldown / AlphaFold-Multimer: pae_model_N_*.json + confidence_model_N_*.json
+    # (+ ranked_N.pdb / unrelaxed_model_N_*.pdb / ranking_debug.json)
+    # Must come before Boltz because both have confidence_*.json files.
+    has_ap_pae = any(re.match(r'^pae_model_\d+_.+\.json$', b) for b in basenames)
+    has_ap_conf = any(re.match(r'^confidence_model_\d+_.+\.json$', b) for b in basenames)
+    if has_ap_pae and has_ap_conf:
+        return 'alphapulldown'
+
     # Boltz
     has_boltz_conf = any(b.startswith('confidence_') and b.endswith('.json') for b in basenames)
     has_boltz_struct = any(b.endswith('.cif') or b.endswith('.pdb') for b in basenames)
@@ -366,6 +374,8 @@ def find_models(filenames, platform, read_fn):
         yield from _find_colabfold(filenames, basenames_map)
     elif platform in ('alphafold3', 'openfold3'):
         yield from _find_af3(filenames, basenames_map)
+    elif platform == 'alphapulldown':
+        yield from _find_alphapulldown(filenames, basenames_map, read_fn)
     elif platform == 'esmfold2':
         yield from _find_esmfold2(filenames, basenames_map)
     elif platform == 'esmfold2_native':
@@ -494,6 +504,128 @@ def _find_af3(filenames, basenames_map):
         rank = f'{seed_idx}_{sample_idx}'
         if conf_path:
             yield (pred_name, rank, base, name, conf_path, summary_path or conf_path, 'cif')
+
+
+def _find_alphapulldown(filenames, basenames_map, read_fn):
+    """AlphaPulldown / AlphaFold-Multimer (via AlphaPulldown).
+
+    AlphaFold/AlphaPulldown writes one bundle per protein pair:
+      - pae_<model_id>.json         AlphaFold pae_json output:
+                                    [{"predicted_aligned_error": [[..]],
+                                      "max_predicted_aligned_error": float}]
+      - confidence_<model_id>.json  AlphaFold confidence_json output:
+                                    {"residueNumber": [..],
+                                     "confidenceScore": [..],  ← per-residue pLDDT
+                                     "confidenceCategory": [..]}
+      - unrelaxed_<model_id>.pdb    per-model coordinates (B-factors = pLDDT)
+      - relaxed_<model_id>.pdb      optional, AMBER-relaxed
+      - ranked_N.pdb                rank-sorted copies (N=0 is best)
+      - ranking_debug.json          {"iptm+ptm": {model_id: score},
+                                     "order": [model_id, ...]}
+
+    Note: per-model scalar pTM and ipTM are only stored inside
+    result_<model_id>.pkl (which we do not parse). The CSV's ipTM/pTM
+    columns will therefore be empty for AlphaPulldown — iLIS/cLIS/ipSAE
+    from PAE are the primary screening metrics here.
+
+    <model_id> is typically `model_M_multimer_v3_pred_K` (M = 1..5 model
+    variant, K = prediction index). Each prediction pair usually lives in
+    its own subdirectory, so we group files by directory and process each
+    group independently.
+    """
+    from collections import defaultdict
+    by_dir = defaultdict(list)
+    for f in filenames:
+        by_dir[os.path.dirname(f)].append(f)
+
+    for d, files in by_dir.items():
+        local = {os.path.basename(f): f for f in files}
+
+        pae_by_id = {}
+        for b, f in local.items():
+            m = re.match(r'^pae_(model_\d+.*?)\.json$', b)
+            if m:
+                pae_by_id[m.group(1)] = f
+
+        conf_by_id = {}
+        for b, f in local.items():
+            m = re.match(r'^confidence_(model_\d+.*?)\.json$', b)
+            if m:
+                conf_by_id[m.group(1)] = f
+
+        # Prefer relaxed over unrelaxed when both exist for the same model_id
+        struct_by_id = {}
+        for b, f in local.items():
+            m = re.match(r'^unrelaxed_(model_\d+.*?)\.(pdb|cif)$', b)
+            if m:
+                struct_by_id.setdefault(m.group(1), f)
+        for b, f in local.items():
+            m = re.match(r'^relaxed_(model_\d+.*?)\.(pdb|cif)$', b)
+            if m:
+                struct_by_id[m.group(1)] = f
+
+        ranked_by_rank = {}
+        for b, f in local.items():
+            m = re.match(r'^ranked_(\d+)\.(pdb|cif)$', b)
+            if m:
+                ranked_by_rank[int(m.group(1))] = f
+
+        if not pae_by_id:
+            continue
+        if not struct_by_id and not ranked_by_rank:
+            continue
+
+        # Read ranking_debug.json → ordered list of model_ids (best first)
+        rank_order = []
+        if 'ranking_debug.json' in local:
+            try:
+                content = read_fn(local['ranking_debug.json'])
+                if isinstance(content, str):
+                    dbg = json.loads(content)
+                    raw = dbg.get('order', [])
+                    if isinstance(raw, list):
+                        rank_order = [str(x) for x in raw]
+            except (json.JSONDecodeError, ValueError, KeyError, TypeError):
+                pass
+
+        pred_name = os.path.basename(d) or 'prediction'
+
+        if rank_order and struct_by_id:
+            # Best path: rank index → model_id → per-model struct + PAE
+            for rank_idx, model_id in enumerate(rank_order):
+                if model_id not in pae_by_id or model_id not in struct_by_id:
+                    continue
+                struct_path = struct_by_id[model_id]
+                pae_path = pae_by_id[model_id]
+                conf_path = conf_by_id.get(model_id, pae_path)
+                fmt = 'cif' if struct_path.lower().endswith('.cif') else 'pdb'
+                yield (pred_name, str(rank_idx), os.path.basename(struct_path),
+                       struct_path, pae_path, conf_path, fmt)
+        elif struct_by_id:
+            # No ranking info — iterate by sorted model_id with 0-indexed rank
+            sorted_ids = sorted(set(struct_by_id.keys()) & set(pae_by_id.keys()))
+            for rank_idx, model_id in enumerate(sorted_ids):
+                struct_path = struct_by_id[model_id]
+                pae_path = pae_by_id[model_id]
+                conf_path = conf_by_id.get(model_id, pae_path)
+                fmt = 'cif' if struct_path.lower().endswith('.cif') else 'pdb'
+                yield (pred_name, str(rank_idx), os.path.basename(struct_path),
+                       struct_path, pae_path, conf_path, fmt)
+        else:
+            # Only ranked_N.pdb available — need ranking_debug to match PAE
+            if not rank_order:
+                continue
+            for rank_idx, model_id in enumerate(rank_order):
+                if rank_idx not in ranked_by_rank or model_id not in pae_by_id:
+                    continue
+                struct_path = ranked_by_rank[rank_idx]
+                pae_path = pae_by_id[model_id]
+                conf_path = conf_by_id.get(model_id, pae_path)
+                fmt = 'cif' if struct_path.lower().endswith('.cif') else 'pdb'
+                # Use model_id label so the CSV's `model` column carries the
+                # underlying AF-Multimer model identifier (not the rank).
+                yield (pred_name, str(rank_idx), model_id,
+                       struct_path, pae_path, conf_path, fmt)
 
 
 def _find_boltz(filenames, basenames_map):
@@ -901,6 +1033,19 @@ def extract_confidence_scores(confidence_path, read_fn):
             scores['chainPairIptm'] = raw
     if 'aggregate_score' in data:
         scores['aggregateScore'] = _unwrap(data['aggregate_score'])
+
+    # AlphaFold confidence_json format (AlphaPulldown's confidence_<model_id>.json):
+    # {"residueNumber": [..], "confidenceScore": [..], "confidenceCategory": [..]}
+    # The per-residue confidenceScore is pLDDT — average it for a global pLDDT.
+    if 'confidenceScore' in data and isinstance(data['confidenceScore'], list):
+        plddts = data['confidenceScore']
+        if plddts:
+            scores.setdefault('pLDDT', sum(plddts) / len(plddts))
+
+    # AF-Multimer ranking_debug.json composite (0.8·iPTM + 0.2·pTM); kept as
+    # rankingScore — not aliased to ipTM to avoid mixing semantics.
+    if 'ranking_confidence' in data:
+        scores['rankingScore'] = _unwrap(data['ranking_confidence'])
 
     # Tamarind AF3 aggregated format
     if 'avg_plddt' in data and 'pLDDT' not in scores:
@@ -1830,6 +1975,7 @@ def _sort_csv(filepath):
 
 PLATFORM_LABELS = {
     'alphafold3': 'AlphaFold3',
+    'alphapulldown': 'AlphaPulldown (AF-Multimer)',
     'colabfold': 'ColabFold',
     'boltz': 'Boltz',
     'chai': 'Chai-1',
@@ -2002,12 +2148,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Supported platforms (auto-detected):
-  AlphaFold3   *_model_N.cif + *_full_data_N.json + *_summary_confidences_N.json
-  ColabFold    *_unrelaxed_rank_N*.pdb + *_scores_rank_N*.json
-  Boltz        *.pdb/.cif + confidence_*.json + pae_*.npz
-  Chai-1       pred.rank_N.cif + scores.model_idx_N.json + pae.*.npy/.npz
-  OpenFold3    result_sample_N_model.pdb + result_sample_N_confidences*.json
-  Generic      any .pdb/.cif + PAE .json
+  AlphaFold3     *_model_N.cif + *_full_data_N.json + *_summary_confidences_N.json
+  ColabFold      *_unrelaxed_rank_N*.pdb + *_scores_rank_N*.json
+  AlphaPulldown  ranked_N.pdb / unrelaxed_model_N_*.pdb + pae_model_N_*.json
+                 + confidence_model_N_*.json (+ ranking_debug.json)
+  Boltz          *.pdb/.cif + confidence_*.json + pae_*.npz
+  Chai-1         pred.rank_N.cif + scores.model_idx_N.json + pae.*.npy/.npz
+  OpenFold3      result_sample_N_model.pdb + result_sample_N_confidences*.json
+  Generic        any .pdb/.cif + PAE .json
 
 Examples:
   python lis.py alphafold3_output.zip
@@ -2028,7 +2176,7 @@ Examples:
     parser.add_argument('--cb-cutoff', type=float, default=8,
                         help='Cb distance cutoff in Angstroms (default: 8)')
     parser.add_argument('--platform', default=None,
-                        choices=['alphafold3', 'colabfold', 'boltz', 'chai', 'openfold3', 'generic'],
+                        choices=['alphafold3', 'alphapulldown', 'colabfold', 'boltz', 'chai', 'openfold3', 'generic'],
                         help='Force platform detection (default: auto-detect)')
     parser.add_argument('--workers', '-w', type=int, default=1,
                         help='Number of parallel workers (default: 1)')
