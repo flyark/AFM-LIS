@@ -1894,6 +1894,52 @@ def format_row(name, rank, struct_file, pair):
 # Worker Functions (top-level for multiprocessing pickling)
 # ============================================================================
 
+def _extract_alphapulldown_scalars(struct_path, model_label, read_fn):
+    """Read exact per-model iPTM and pTM from a sibling ranking_debug.json.
+
+    AlphaPulldown writes (for multimer mode):
+        {"iptm+ptm": {model_id: composite},   # 0.8·iPTM + 0.2·pTM
+         "order":    [model_id, ...],
+         "iptm":     {model_id: iptm}}        # raw per-model iPTM
+
+    AF-Multimer's ranking score is composite = 0.8·iPTM + 0.2·pTM, so
+        pTM = 5·composite − 4·iPTM  (algebraically exact, not an approximation).
+
+    Returns a dict with optional keys: ipTM, pTM, rankingScore. Empty on miss.
+    """
+    ranking_path = os.path.join(os.path.dirname(struct_path), 'ranking_debug.json')
+    content = read_fn(ranking_path)
+    if not content or not isinstance(content, str):
+        return {}
+    try:
+        rd = json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+
+    # Pull the AF-Multimer model_id out of any label form we yield
+    # (e.g. 'unrelaxed_model_3_multimer_v3_pred_0.pdb' → 'model_3_multimer_v3_pred_0').
+    m = re.search(r'model_\d+(?:_[A-Za-z0-9]+)*', model_label)
+    if not m:
+        return {}
+    model_id = m.group(0)
+
+    out = {}
+    iptm_dict = rd.get('iptm', {}) or {}
+    composite_dict = rd.get('iptm+ptm', {}) or {}
+
+    if model_id in iptm_dict:
+        iptm = float(iptm_dict[model_id])
+        out['ipTM'] = iptm
+        if model_id in composite_dict:
+            composite = float(composite_dict[model_id])
+            out['rankingScore'] = composite
+            ptm = 5.0 * composite - 4.0 * iptm
+            # Tiny floating-point excursions outside [0, 1] are OK to clamp.
+            if -0.005 <= ptm <= 1.005:
+                out['pTM'] = max(0.0, min(1.0, ptm))
+    return out
+
+
 def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False):
     """Process a single model. Returns (name, rank, rows, error_msg) tuple.
 
@@ -1918,6 +1964,14 @@ def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=F
             full_scores = extract_confidence_scores(pae_path, read_fn)
             for k, v in full_scores.items():
                 if k not in scores:
+                    scores[k] = v
+
+        # AlphaPulldown: pull exact per-model iPTM and recover pTM from
+        # ranking_debug.json (composite = 0.8·iPTM + 0.2·pTM → pTM = 5·comp − 4·iPTM).
+        if detected == 'alphapulldown':
+            ap_scalars = _extract_alphapulldown_scalars(struct_path, model_label, read_fn)
+            for k, v in ap_scalars.items():
+                if k not in scores or scores.get(k) is None:
                     scores[k] = v
 
         try:
