@@ -1147,7 +1147,13 @@ def parse_cif_coords(cif_text):
                 in_atom_site = False
                 continue
             parts = line.strip().split()
-            if len(parts) < len(col_names):
+            # Boltz CIFs wrap the trailing pdbx_PDB_model_num field onto the next
+            # line for some atoms (data line has 18 fields + a lone "1" on the
+            # next line). Don't enforce strict column-count match — just gate
+            # on the first token being ATOM/HETATM. get_col() returns '' for
+            # any column past parts.length, which is harmless: we never read
+            # the wrapped model_num column.
+            if not parts or parts[0] not in ('ATOM', 'HETATM'):
                 continue
 
             def get_col(name, _parts=parts, _cols=col_names):
@@ -1250,7 +1256,13 @@ def get_chains_from_cif(cif_text):
                 in_atom_site = False
                 continue
             parts = line.strip().split()
-            if len(parts) < len(col_names):
+            # Boltz CIFs wrap the trailing pdbx_PDB_model_num field onto the next
+            # line for some atoms (data line has 18 fields + a lone "1" on the
+            # next line). Don't enforce strict column-count match — just gate
+            # on the first token being ATOM/HETATM. get_col() returns '' for
+            # any column past parts.length, which is harmless: we never read
+            # the wrapped model_num column.
+            if not parts or parts[0] not in ('ATOM', 'HETATM'):
                 continue
 
             def get_col(name, _parts=parts, _cols=col_names):
