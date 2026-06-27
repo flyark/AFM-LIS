@@ -1100,8 +1100,11 @@ def extract_confidence_scores(confidence_path, read_fn):
 # ============================================================================
 
 def parse_pdb_coords(pdb_text):
-    """Extract one Cb (Ca for GLY, P for nucleic) coordinate per residue from PDB text."""
+    """Extract one Cb (Ca for GLY, P for nucleic) coordinate per polymer residue,
+    plus one coordinate per non-polymer HETATM atom, from PDB text. See
+    parse_cif_coords for why per-atom HETATM coords keep the PAE alignment."""
     residues = OrderedDict()
+    het_idx = 0
     for line in pdb_text.split('\n'):
         if not line.startswith('ATOM') and not line.startswith('HETATM'):
             continue
@@ -1110,13 +1113,24 @@ def parse_pdb_coords(pdb_text):
         atom_name = line[12:16].strip()
         comp_id = line[17:20].strip()
         chain = line[21:22].strip() or 'A'
+        x = float(line[30:38])
+        y = float(line[38:46])
+        z = float(line[46:54])
+
+        if line.startswith('HETATM'):
+            # Ion = one monatomic token; glycan/ligand = one token per atom.
+            if comp_id in ION_NAMES:
+                if f'{chain}:1' not in residues:
+                    residues[f'{chain}:1'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+            else:
+                residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': 'P' in atom_name}
+                het_idx += 1
+            continue
+
         try:
             resnum = int(line[22:26].strip())
         except ValueError:
             continue
-        x = float(line[30:38])
-        y = float(line[38:46])
-        z = float(line[46:54])
         key = f'{chain}:{resnum}'
 
         if atom_name == 'CB':
@@ -1125,15 +1139,20 @@ def parse_pdb_coords(pdb_text):
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
         elif atom_name == 'P' and key not in residues:
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
-        elif line.startswith('HETATM') and comp_id in ION_NAMES and f'{chain}:1' not in residues:
-            residues[f'{chain}:1'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
 
     return list(residues.values())
 
 
 def parse_cif_coords(cif_text):
-    """Extract one Cb (Ca for GLY, P for nucleic) coordinate per residue from mmCIF text."""
+    """Extract one Cb (Ca for GLY, P for nucleic) coordinate per polymer residue,
+    plus one coordinate per non-polymer HETATM atom, from mmCIF text.
+
+    AlphaFold3 tokenizes every glycan/ligand atom separately, so the PAE matrix
+    has one token per HETATM atom. Emitting one coordinate per atom keeps the
+    contact map aligned with the PAE tokens; otherwise every chain after a glycan
+    loses its contact-based metrics (cLIS -> iLIS, actifpTM)."""
     residues = OrderedDict()
+    het_idx = 0
     in_atom_site = False
     col_names = []
 
@@ -1176,10 +1195,15 @@ def parse_cif_coords(cif_text):
             except ValueError:
                 continue
 
-            if group_pdb == 'HETATM' and comp_id in ION_NAMES:
-                ion_key = f'{chain}:1'
-                if ion_key not in residues:
-                    residues[ion_key] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+            if group_pdb == 'HETATM':
+                # Ion = one monatomic token; glycan/ligand = one token per atom.
+                if comp_id in ION_NAMES:
+                    ion_key = f'{chain}:1'
+                    if ion_key not in residues:
+                        residues[ion_key] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+                else:
+                    residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': 'P' in atom_name}
+                    het_idx += 1
                 continue
 
             try:
@@ -1291,6 +1315,10 @@ def get_chains_from_cif(cif_text):
                     seen_residues.add(rkey)
                     counted = True
                     chain_types[chain] = 'ion'
+            elif group_pdb == 'HETATM':
+                # Glycan / ligand (non-ion HETATM): one token per atom in AF3.
+                chain_types[chain] = 'glycan'
+                counted = True
 
             if counted:
                 if chain not in chain_counts:
