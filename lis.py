@@ -1059,11 +1059,15 @@ def _find_from_manifest(manifest, filenames):
 # PAE Extraction
 # ============================================================================
 
-def extract_pae(pae_source, read_fn, pae_key=None):
+def extract_pae(pae_source, read_fn, pae_key=None, allow_pickle=False):
     """Extract PAE matrix from a file. Returns 2D numpy array or None.
 
     pae_key, if given (from a lis.json manifest), is tried first so a non-standard JSON
     key can be read; otherwise the usual keys (pae / predicted_aligned_error / ...) apply.
+
+    allow_pickle enables reading PAE from a .pkl/.pickle (raw AlphaFold2/-Multimer
+    result_*.pkl). Off by default because unpickling executes arbitrary code; it is only
+    reachable via an explicit manifest 'pae' entry plus the --allow-pickle flag.
     """
     if not pae_source:
         return None
@@ -1101,6 +1105,42 @@ def extract_pae(pae_source, read_fn, pae_key=None):
         if arr.ndim == 3:
             arr = arr[0]
         return arr.astype(np.float32)
+
+    # .pkl / .pickle (raw AlphaFold2 / AlphaFold-Multimer result_*.pkl, which stores the
+    # PAE under 'predicted_aligned_error'). Unpickling runs arbitrary code, so this path is
+    # gated behind allow_pickle (--allow-pickle) and only reached via an explicit manifest
+    # 'pae' entry — auto-detection never selects a pickle.
+    if basename.endswith(('.pkl', '.pickle')):
+        if not allow_pickle:
+            return None  # caller emits a --allow-pickle hint
+        if isinstance(content, str):
+            content = content.encode('latin-1')
+        import pickle
+        try:
+            obj = pickle.loads(content)
+        except Exception:
+            return None
+        # Usually the AF2 result dict; occasionally just the bare array.
+        candidates = []
+        if isinstance(obj, dict):
+            if pae_key and pae_key in obj:
+                candidates.append(obj[pae_key])
+            for k in ('predicted_aligned_error', 'pae', 'pae_matrix',
+                      'predicted_aligned_error_matrix'):
+                if k in obj:
+                    candidates.append(obj[k])
+        else:
+            candidates.append(obj)
+        for v in candidates:
+            try:
+                arr = np.asarray(v, dtype=np.float32)
+            except (ValueError, TypeError):
+                continue
+            if arr.ndim == 3:
+                arr = arr[0]
+            if arr.ndim == 2 and arr.shape[0] == arr.shape[1] and arr.shape[0] > 0:
+                return arr
+        return None
 
     # JSON file
     if not isinstance(content, str):
@@ -2229,7 +2269,7 @@ def _extract_alphapulldown_scalars(struct_path, model_label, read_fn):
     return out
 
 
-def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False):
+def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False, allow_pickle=False):
     """Process a single model. Returns (name, rank, rows, error_msg) tuple.
 
     Any unexpected exception (corrupt gz, truncated file, unreadable JSON, etc.)
@@ -2244,8 +2284,11 @@ def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=F
         if not struct_text or not isinstance(struct_text, str):
             return name, rank, None, f'structure file unreadable: {struct_path}'
 
-        pae = extract_pae(pae_path, read_fn, pae_key)
+        pae = extract_pae(pae_path, read_fn, pae_key, allow_pickle=allow_pickle)
         if pae is None:
+            if pae_path and os.path.basename(pae_path).endswith(('.pkl', '.pickle')) and not allow_pickle:
+                return name, rank, None, (f'PAE is a pickle ({os.path.basename(pae_path)}); re-run with '
+                                          f'--allow-pickle to load it (only for files you trust).')
             return name, rank, None, (f'PAE not found or unreadable: {pae_path}. If this layout is '
                                       f'unrecognised, declare it in a lis.json manifest (pae / pae_key) or pass --manifest.')
         pae = np.nan_to_num(pae, nan=31.0)
@@ -2282,16 +2325,16 @@ def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=F
         return name, rank, None, f'unexpected error on {pae_path}: {type(e).__name__}: {e}'
 
 
-def _process_one_sequential(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False):
+def _process_one_sequential(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=False, allow_pickle=False):
     """Sequential wrapper."""
-    return _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose)
+    return _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose, allow_pickle)
 
 
 def _mp_worker(args):
     """Multiprocessing worker — creates its own read_fn from file_map."""
-    model_tuple, detected, pae_cutoff, cb_cutoff, file_map, verbose = args
+    model_tuple, detected, pae_cutoff, cb_cutoff, file_map, verbose, allow_pickle = args
     read_fn = _make_dir_reader(file_map)
-    return _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose)
+    return _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose, allow_pickle)
 
 
 def _sort_csv(filepath):
@@ -2330,7 +2373,8 @@ PLATFORM_LABELS = {
 
 
 def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
-        platform=None, skip_existing=True, workers=1, verbose=False, manifest_path=None):
+        platform=None, skip_existing=True, workers=1, verbose=False, manifest_path=None,
+        allow_pickle=False):
     """Run the LIS analysis pipeline.
 
     Processes each model independently, one at a time, appending CSV rows
@@ -2450,7 +2494,7 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
 
         # file_map is picklable (dict of str → str for folders)
         task_args = [
-            (m, detected, pae_cutoff, cb_cutoff, file_map, verbose)
+            (m, detected, pae_cutoff, cb_cutoff, file_map, verbose, allow_pickle)
             for m in models_todo
         ]
 
@@ -2466,7 +2510,7 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
         for gi, model_tuple in enumerate(models_todo):
             name, rank = model_tuple[0], model_tuple[1]
             name, rank, result_rows, err_msg = _process_one_sequential(
-                model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose)
+                model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose, allow_pickle)
             if result_rows:
                 with open(output, 'a') as f:
                     f.write('\n'.join(result_rows) + '\n')
@@ -2542,6 +2586,10 @@ Examples:
                         help='Reprocess all predictions even if already in the output CSV')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show error details for failed predictions')
+    parser.add_argument('--allow-pickle', action='store_true',
+                        help='Permit reading PAE from a .pkl/.pickle file declared in a manifest '
+                             '(e.g. a raw AlphaFold2/-Multimer result_*.pkl). Unpickling executes '
+                             'arbitrary code — only use on files you trust.')
     args = parser.parse_args()
 
     if not os.path.exists(args.path):
@@ -2552,7 +2600,7 @@ Examples:
         pae_cutoff=args.pae_cutoff, cb_cutoff=args.cb_cutoff,
         platform=args.platform, manifest_path=args.manifest,
         skip_existing=not args.no_skip_existing,
-        workers=args.workers, verbose=args.verbose)
+        workers=args.workers, verbose=args.verbose, allow_pickle=args.allow_pickle)
 
 
 if __name__ == '__main__':

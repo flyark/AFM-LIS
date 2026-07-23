@@ -112,18 +112,39 @@ python lis.py /path/to/predictions/ --no-skip-existing
 
 **Supported platforms (auto-detected):** AlphaFold3 (including the official *local* output and the AF3 Server layout), ColabFold, Boltz-1/2, Chai-1, OpenFold3.
 
-**Unrecognized layout? Declare it with a manifest.** For anything auto-detection can't place, drop a `lis.json` in the folder (or pass `--manifest path/to/lis.json`) describing your data. All fields optional:
+**Unrecognized layout? Declare it with a manifest.** For anything auto-detection can't place, drop a `lis.json` in the prediction folder (or pass `--manifest path/to/lis.json`) describing your data. Globs match on filenames **relative to that folder**. All fields optional:
 
 - `structure` / `pae` / `summary` — filename globs for the structure, PAE, and scores files
 - `pae_key` — the JSON key holding the PAE matrix (when it isn't a standard one)
 - `platform` — force a specific finder (same as `--platform`)
 - `models` — an explicit `[{name, structure, pae, summary}]` list, for full control
 
+Glob mode — one structure/PAE pair per matched structure:
+
 ```json
 {"structure": "*_model.cif", "pae": "*_confidences.json", "pae_key": "pae"}
 ```
 
+Explicit `models` mode — name each model's files (irregular naming, mixed sub-directories, higher-order complexes):
+
+```json
+{
+  "models": [
+    {"name": "runA", "structure": "runA/ranked_0.pdb", "pae": "runA/pae.json", "pae_key": "pae"},
+    {"name": "runB", "structure": "runB/model.cif",     "pae": "runB/pae.npy"}
+  ]
+}
+```
+
 The manifest is checked before auto-detection; with `models` or `pae` it drives parsing directly, with only `platform` it just forces the finder. When a folder has no readable PAE, the error message points here.
+
+**Raw AlphaFold2 / AlphaFold-Multimer `.pkl`?** The PAE inside a `result_*.pkl` can be read, but only when you declare it **and** pass `--allow-pickle`:
+
+```json
+{"structure": "*.pdb", "pae": "result_*.pkl", "pae_key": "predicted_aligned_error"}
+```
+
+It is off by default because unpickling executes arbitrary code — only enable it for files you trust (`pae_key` defaults to `predicted_aligned_error`). In most pipelines the same PAE is already written as JSON right next to the pickle, which needs no flag.
 
 ### Web Tool: LIVIA
 
