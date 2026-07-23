@@ -960,11 +960,111 @@ def _find_generic(filenames, basenames_map, read_fn=None):
 
 
 # ============================================================================
+# Manifest — the explicit "declare your data" escape hatch
+# ============================================================================
+
+def load_manifest(filenames, read_fn, manifest_arg=None):
+    """Load an optional lis.json manifest for layouts auto-detection doesn't recognise.
+
+    Looked up from --manifest, else a lis.json / lis_manifest.json among the inputs.
+    Returns the parsed dict (with '_dir' = the manifest's directory, for resolving relative
+    paths) or None. Every field is optional:
+        platform   force the finder (same as --platform)
+        structure  glob for structure files            pae      glob for the PAE file
+        pae_key    JSON key holding the PAE matrix      summary  glob for the scores file
+        models     [ {name, structure, pae, summary} ] explicit per-prediction mapping
+    """
+    content, src = None, None
+    if manifest_arg:
+        try:
+            content, src = open(manifest_arg).read(), manifest_arg
+        except OSError:
+            return None
+    else:
+        for f in filenames:
+            if os.path.basename(f).lower() in ('lis.json', 'lis_manifest.json'):
+                content, src = read_fn(f), f
+                break
+    if not isinstance(content, str):
+        return None
+    try:
+        m = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(m, dict):
+        return None
+    m['_dir'] = os.path.dirname(src)
+    return m
+
+
+def manifest_has_layout(manifest):
+    """True if the manifest says how to find models (not merely which platform)."""
+    return bool(manifest) and bool(manifest.get('models') or manifest.get('pae'))
+
+
+def _find_from_manifest(manifest, filenames):
+    """Yield model tuples from a manifest. Two modes: an explicit 'models' list, or globs
+    (structure/pae/summary) paired per structure. Carries pae_key as an 8th tuple element
+    when declared, so extract_pae can read a non-standard PAE key."""
+    import fnmatch
+    base = manifest.get('_dir', '')
+    pae_key = manifest.get('pae_key')
+
+    def resolve(pattern):
+        if not pattern:
+            return []
+        for cand in ([f'{base}/{pattern}'] if base else []) + [pattern]:
+            if cand in filenames:
+                return [cand]
+        bn = os.path.basename(pattern)                       # glob on basename, in file order
+        return [f for f in filenames if fnmatch.fnmatch(os.path.basename(f), bn)]
+
+    def emit(name, rank, s, p, sm):
+        fmt = 'cif' if s.endswith('.cif') else 'pdb'
+        t = (name, str(rank), os.path.basename(s), s, p, sm or p, fmt)
+        return t + (pae_key,) if pae_key else t
+
+    if manifest.get('models'):
+        for i, e in enumerate(manifest['models']):
+            s = resolve(e.get('structure'))
+            p = resolve(e.get('pae') or e.get('structure'))
+            if not s or not p:
+                continue
+            sm = resolve(e.get('summary'))
+            yield emit(e.get('name', f'model_{i}'), e.get('rank', i), s[0], p[0], sm[0] if sm else None)
+        return
+
+    structs = sorted(resolve(manifest.get('structure')) or
+                     [f for f in filenames if f.endswith(('.cif', '.pdb'))], key=os.path.basename)
+    pae_all = resolve(manifest.get('pae'))
+    summ_all = resolve(manifest.get('summary'))
+
+    def sibling(files, sdir, sname, i):
+        if not files:
+            return None
+        same = [f for f in files if os.path.dirname(f) == sdir]
+        for pool in (same, files):
+            for f in pool:
+                if sname in os.path.basename(f):
+                    return f
+        return (same or files)[i] if i < len(same or files) else (same or files)[0]
+
+    for i, s in enumerate(structs):
+        sdir = os.path.dirname(s)
+        sname = re.sub(r'\.(cif|pdb)$', '', os.path.basename(s))
+        yield emit(sname, i, s, sibling(pae_all, sdir, sname, i), sibling(summ_all, sdir, sname, i))
+
+
+# ============================================================================
 # PAE Extraction
 # ============================================================================
 
-def extract_pae(pae_source, read_fn):
-    """Extract PAE matrix from a file. Returns 2D numpy array or None."""
+def extract_pae(pae_source, read_fn, pae_key=None):
+    """Extract PAE matrix from a file. Returns 2D numpy array or None.
+
+    pae_key, if given (from a lis.json manifest), is tried first so a non-standard JSON
+    key can be read; otherwise the usual keys (pae / predicted_aligned_error / ...) apply.
+    """
     if not pae_source:
         return None
     content = read_fn(pae_source)
@@ -1009,6 +1109,16 @@ def extract_pae(pae_source, read_fn):
         data = json.loads(content)
     except json.JSONDecodeError:
         return None
+
+    # Manifest-declared PAE key wins (lets a non-standard key be read).
+    if pae_key and isinstance(data, dict) and pae_key in data:
+        v = data[pae_key]
+        if isinstance(v, list) and v:
+            if isinstance(v[0], list):
+                return np.array(v, dtype=np.float32)
+            n = int(round(math.sqrt(len(v))))
+            if n * n == len(v):
+                return np.array(v, dtype=np.float32).reshape(n, n)
 
     # AF3 full_data: {pae: [[...]]}
     if 'pae' in data and isinstance(data['pae'], list):
@@ -2126,16 +2236,18 @@ def _do_process(model_tuple, read_fn, detected, pae_cutoff, cb_cutoff, verbose=F
     is captured and returned as err_msg so one bad prediction doesn't kill the
     whole batch.
     """
-    name, rank, model_label, struct_path, pae_path, scores_path, fmt = model_tuple
+    name, rank, model_label, struct_path, pae_path, scores_path, fmt = model_tuple[:7]
+    pae_key = model_tuple[7] if len(model_tuple) > 7 else None   # optional, from a lis.json manifest
 
     try:
         struct_text = read_fn(struct_path)
         if not struct_text or not isinstance(struct_text, str):
             return name, rank, None, f'structure file unreadable: {struct_path}'
 
-        pae = extract_pae(pae_path, read_fn)
+        pae = extract_pae(pae_path, read_fn, pae_key)
         if pae is None:
-            return name, rank, None, f'PAE not found or unreadable: {pae_path}'
+            return name, rank, None, (f'PAE not found or unreadable: {pae_path}. If this layout is '
+                                      f'unrecognised, declare it in a lis.json manifest (pae / pae_key) or pass --manifest.')
         pae = np.nan_to_num(pae, nan=31.0)
 
         scores = extract_confidence_scores(scores_path, read_fn)
@@ -2218,7 +2330,7 @@ PLATFORM_LABELS = {
 
 
 def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
-        platform=None, skip_existing=True, workers=1, verbose=False):
+        platform=None, skip_existing=True, workers=1, verbose=False, manifest_path=None):
     """Run the LIS analysis pipeline.
 
     Processes each model independently, one at a time, appending CSV rows
@@ -2233,20 +2345,30 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
         print('[LIS] ERROR: No files found', file=sys.stderr)
         sys.exit(1)
 
-    # Detect platform
-    if platform:
-        detected = platform
+    # An optional lis.json manifest is the explicit override for layouts detection cannot
+    # parse. It may declare the models outright (or via globs), or just force the platform.
+    manifest = load_manifest(filenames, read_fn, manifest_path)
+    if manifest and manifest_has_layout(manifest):
+        detected = manifest.get('platform') or 'manifest'
+        print(f'[LIS] Platform: {PLATFORM_LABELS.get(detected, detected)} (from lis.json manifest)')
+        models = list(_find_from_manifest(manifest, filenames))
     else:
-        detected = detect_platform(filenames, read_fn)
-    print(f'[LIS] Platform: {PLATFORM_LABELS.get(detected, detected)}')
-
-    # Find all models
-    models = list(find_models(filenames, detected, read_fn))
+        if manifest and manifest.get('platform') and not platform:
+            platform = manifest['platform']
+        if platform:
+            detected = platform
+        else:
+            detected = detect_platform(filenames, read_fn)
+        print(f'[LIS] Platform: {PLATFORM_LABELS.get(detected, detected)}')
+        models = list(find_models(filenames, detected, read_fn))
     # Filter macOS resource forks
     models = [m for m in models if not m[0].startswith('._')]
 
     if not models:
         print('[LIS] ERROR: No prediction models found', file=sys.stderr)
+        if not (manifest and manifest_has_layout(manifest)):
+            print('[LIS]   Unrecognised layout? Add a lis.json manifest (or pass --manifest)\n'
+                  '[LIS]   declaring "structure"/"pae"/"pae_key", or an explicit "models" list.', file=sys.stderr)
         sys.exit(1)
 
     print(f'[LIS] {len(models)} model(s) found')
@@ -2411,6 +2533,9 @@ Examples:
     parser.add_argument('--platform', default=None,
                         choices=['alphafold3', 'alphapulldown', 'colabfold', 'boltz', 'chai', 'openfold3', 'generic'],
                         help='Force platform detection (default: auto-detect)')
+    parser.add_argument('--manifest', default=None,
+                        help='Path to a lis.json manifest declaring the data (structure/pae/pae_key/summary '
+                             'globs, or an explicit models list) — an override for unrecognised layouts')
     parser.add_argument('--workers', '-w', type=int, default=1,
                         help='Number of parallel workers (default: 1)')
     parser.add_argument('--no-skip-existing', action='store_true',
@@ -2425,7 +2550,7 @@ Examples:
 
     run(args.path, output=args.output, output_dir=args.output_dir,
         pae_cutoff=args.pae_cutoff, cb_cutoff=args.cb_cutoff,
-        platform=args.platform,
+        platform=args.platform, manifest_path=args.manifest,
         skip_existing=not args.no_skip_existing,
         workers=args.workers, verbose=args.verbose)
 

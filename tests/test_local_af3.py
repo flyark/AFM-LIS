@@ -62,5 +62,21 @@ rows = list(csv.DictReader(open(csv_path))) if os.path.exists(csv_path) else []
 check(bool(rows) and all(float(r['iLIS']) > 0 for r in rows),
       'end-to-end local-AF3 run produces a positive iLIS (%s)' % [r.get('iLIS') for r in rows])
 
+# ---- 5. Manifest: the explicit "declare your data" escape hatch ----------------------
+MFN = ['d/x.cif', 'd/x_ae.json', 'd/x_data.json']
+glob_mani = {'structure': '*.cif', 'pae': '*_ae.json', 'pae_key': 'my_pae', '_dir': 'd'}
+mm = list(lis._find_from_manifest(glob_mani, MFN))
+check(len(mm) == 1 and os.path.basename(mm[0][4]) == 'x_ae.json' and mm[0][-1] == 'my_pae',
+      'manifest glob mode pairs the declared PAE file and carries pae_key')
+expl_mani = {'models': [{'name': 'p', 'structure': 'd/x.cif', 'pae': 'd/x_ae.json'}], '_dir': 'd'}
+mm2 = list(lis._find_from_manifest(expl_mani, MFN))
+check(bool(mm2) and mm2[0][0] == 'p' and mm2[0][3] == 'd/x.cif' and mm2[0][4] == 'd/x_ae.json',
+      'manifest explicit "models" maps structure/pae directly')
+check(lis.manifest_has_layout(glob_mani) and not lis.manifest_has_layout({'platform': 'boltz'}),
+      'manifest_has_layout distinguishes a layout from a platform-only hint')
+pk_files = {'x_ae.json': json.dumps({'my_pae': [[0.5, 5.0], [5.0, 0.5]]})}
+pae = lis.extract_pae('x_ae.json', lambda p: pk_files.get(os.path.basename(p)), 'my_pae')
+check(pae is not None and tuple(pae.shape) == (2, 2), 'extract_pae reads a manifest-declared pae_key')
+
 print(('\nALL PASS' if not failures else '\nFAILED: %d check(s)' % len(failures)))
 sys.exit(1 if failures else 0)

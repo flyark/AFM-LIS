@@ -110,7 +110,20 @@ python lis.py /path/to/predictions/ --no-skip-existing
 - Parallel processing with `--workers`
 - Output sorted by name and rank
 
-**Supported platforms (auto-detected):** AlphaFold3, ColabFold, Boltz-1/2, Chai-1, OpenFold3.
+**Supported platforms (auto-detected):** AlphaFold3 (including the official *local* output and the AF3 Server layout), ColabFold, Boltz-1/2, Chai-1, OpenFold3.
+
+**Unrecognized layout? Declare it with a manifest.** For anything auto-detection can't place, drop a `lis.json` in the folder (or pass `--manifest path/to/lis.json`) describing your data. All fields optional:
+
+- `structure` / `pae` / `summary` — filename globs for the structure, PAE, and scores files
+- `pae_key` — the JSON key holding the PAE matrix (when it isn't a standard one)
+- `platform` — force a specific finder (same as `--platform`)
+- `models` — an explicit `[{name, structure, pae, summary}]` list, for full control
+
+```json
+{"structure": "*_model.cif", "pae": "*_confidences.json", "pae_key": "pae"}
+```
+
+The manifest is checked before auto-detection; with `models` or `pae` it drives parsing directly, with only `platform` it just forces the finder. When a folder has no readable PAE, the error message points here.
 
 ### Web Tool: LIVIA
 
