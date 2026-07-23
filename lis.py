@@ -342,6 +342,17 @@ def detect_platform(filenames, read_fn):
         if _has_struct and _has_pae:
             return 'esmfold2_native'
 
+    # Local AF3 (official google-deepmind/alphafold3 output): name-prefixed, no _N index, e.g.
+    #   job/job_model.cif + job_confidences.json (PAE) + job_summary_confidences.json + job_data.json (input),
+    #   plus per-sample job/seed-S_sample-M/job_seed-S_sample-M_confidences.json subdirs. The indexed
+    #   ('_model_N.cif') and bare ('seed-N_sample-M/model.cif') detectors miss it. Placed LAST, so it only
+    #   upgrades a folder that every other platform rejected — it can never re-classify one that already works.
+    has_local_conf = any(b.endswith('_confidences.json') and not b.endswith('_summary_confidences.json') for b in basenames)
+    has_local_summary = any(b.endswith('_summary_confidences.json') for b in basenames)
+    has_local_model = any(b.endswith('_model.cif') for b in basenames)
+    if has_local_conf and has_local_summary and has_local_model:
+        return 'alphafold3'
+
     return 'generic'
 
 
@@ -373,7 +384,12 @@ def find_models(filenames, platform, read_fn):
     if platform == 'colabfold':
         yield from _find_colabfold(filenames, basenames_map)
     elif platform in ('alphafold3', 'openfold3'):
-        yield from _find_af3(filenames, basenames_map)
+        got = False
+        for t in _find_af3(filenames, basenames_map):
+            got = True
+            yield t
+        if not got:                      # official local AlphaFold 3 output (name-prefixed, no _N index)
+            yield from _find_af3_local(filenames, basenames_map)
     elif platform == 'alphapulldown':
         yield from _find_alphapulldown(filenames, basenames_map, read_fn)
     elif platform == 'esmfold2':
@@ -385,7 +401,7 @@ def find_models(filenames, platform, read_fn):
     elif platform == 'chai':
         yield from _find_chai(filenames, basenames_map)
     else:
-        yield from _find_generic(filenames, basenames_map)
+        yield from _find_generic(filenames, basenames_map, read_fn)
 
 
 def _find_colabfold(filenames, basenames_map):
@@ -504,6 +520,41 @@ def _find_af3(filenames, basenames_map):
         rank = f'{seed_idx}_{sample_idx}'
         if conf_path:
             yield (pred_name, rank, base, name, conf_path, summary_path or conf_path, 'cif')
+
+
+def _find_af3_local(filenames, basenames_map):
+    """Official local AlphaFold 3 output (github.com/google-deepmind/alphafold3).
+
+    Files are name-prefixed with no _N index, which the indexed ('_model_N.cif') and
+    the bare ('seed-N_sample-M/model.cif') AF3 finders both miss:
+        job/job_model.cif                 job/job_confidences.json          (PAE: 'pae' key)
+        job/job_summary_confidences.json  job/job_data.json                 (input; no PAE)
+        job/seed-S_sample-M/job_seed-S_sample-M_model.cif  (+ _confidences.json, _summary_confidences.json)
+
+    Prefers the per-sample ensemble (one rank each); the top-level model is a copy of
+    the best sample, so it is used only when no seed-S_sample-M subdirs are present.
+    """
+    filenames_set = set(filenames)
+    seed_models, top_models = [], []
+    for name in filenames:
+        base = os.path.basename(name)
+        if not base.endswith('_model.cif'):
+            continue
+        prefix = base[:-len('_model.cif')]                       # 'job' or 'job_seed-S_sample-M'
+        dirpath = os.path.dirname(name)
+        conf = os.path.join(dirpath, f'{prefix}_confidences.json')
+        if conf not in filenames_set:                            # a PAE sibling is required
+            continue
+        summ = os.path.join(dirpath, f'{prefix}_summary_confidences.json')
+        summ = summ if summ in filenames_set else conf
+        m = re.search(r'seed-(\d+)_sample-(\d+)', prefix) or re.search(r'seed-(\d+)_sample-(\d+)', dirpath)
+        pred = re.sub(r'_seed-\d+_sample-\d+$', '', prefix) or _get_toplevel_name(name) or 'af3_prediction'
+        if m:
+            seed_models.append((pred, f'{m.group(1)}_{m.group(2)}', base, name, conf, summ))
+        else:
+            top_models.append((pred, '0', base, name, conf, summ))
+    for pred, rank, base, name, conf, summ in (seed_models or top_models):
+        yield (pred, rank, base, name, conf, summ, 'cif')
 
 
 def _find_alphapulldown(filenames, basenames_map, read_fn):
@@ -845,38 +896,65 @@ def _find_esmfold2_native(filenames, basenames_map):
             yield (pred_name, rank, os.path.basename(sp), sp, pp, jp, fmt)
 
 
-def _find_generic(filenames, basenames_map):
-    """Generic: any .pdb/.cif + matching .json or .npz"""
+def _find_generic(filenames, basenames_map, read_fn=None):
+    """Generic: any .pdb/.cif + a JSON/NPZ carrying PAE.
+
+    Keeps the original name -> index -> positional pairing (so folders that already work
+    are untouched), with two additions: obvious non-PAE JSONs (AF3 '*_data.json' input,
+    ranking/summary/config files) are dropped from the candidate pool so they cannot
+    shadow the real PAE file, and if the chosen file still has no readable PAE the
+    remaining candidates are scanned for one that does. Both only ever rescue a case that
+    used to fail; a previously-correct pick is left exactly as before.
+    """
     struct_files = sorted(
         [f for f in filenames if f.endswith('.cif') or f.endswith('.pdb')],
         key=lambda f: os.path.basename(f)
     )
-    json_files = [f for f in filenames if f.endswith('.json')]
+    all_json = [f for f in filenames if f.endswith('.json')]
     npz_files = [f for f in filenames if f.endswith('.npz')]
+
+    def is_non_pae(f):
+        b = os.path.basename(f).lower()
+        return any(k in b for k in (
+            '_data.json', 'ranking_scores', 'ranking_debug', 'config',
+            '_summary_confidences.json', 'summary_confidence', 'metrics.json'))
+    # Drop obvious non-PAE JSONs, but keep original order and never end up with nothing.
+    json_files = [f for f in all_json if not is_non_pae(f)] or all_json
 
     for i, sf in enumerate(struct_files):
         struct_base = os.path.basename(sf)
         fmt = 'cif' if sf.endswith('.cif') else 'pdb'
         name_prefix = re.sub(r'\.(cif|pdb)$', '', struct_base)
-
-        pae_source = None
         idx_match = re.search(r'(\d+)', name_prefix)
         idx = idx_match.group(1) if idx_match else None
 
-        for jf in json_files:
+        pae_source = None
+        for jf in json_files:                       # (1) shares the structure's base name
             if name_prefix in os.path.basename(jf):
                 pae_source = jf
                 break
-        if not pae_source and idx:
+        if not pae_source and idx:                  # (2) shares the numeric index
             for jf in json_files:
                 fb = os.path.basename(jf)
                 if idx in fb and 'aggregated' not in fb:
                     pae_source = jf
                     break
-        if not pae_source:
+        if not pae_source:                          # (3) positional
             pae_source = json_files[i] if i < len(json_files) else (json_files[0] if json_files else None)
         if not pae_source and npz_files:
             pae_source = npz_files[i] if i < len(npz_files) else npz_files[0]
+
+        # Generosity: only if the chosen file has no readable PAE, look for one that does.
+        if read_fn is not None and pae_source is not None and extract_pae(pae_source, read_fn) is None:
+            for cf in json_files + npz_files:
+                if cf == pae_source:
+                    continue
+                try:
+                    if extract_pae(cf, read_fn) is not None:
+                        pae_source = cf
+                        break
+                except Exception:
+                    continue
 
         yield ('generic', str(i), struct_base, sf, pae_source, pae_source, fmt)
 
