@@ -50,8 +50,8 @@ ION_NAMES = {'ZN', 'CA', 'MG', 'MN', 'FE', 'CU', 'NA', 'K', 'CL', 'NI', 'CO', 'C
 
 CSV_HEADER = (
     'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,actifpTM,LIS,cLIS,LIA,cLIA,'
-    'ipTM,pLDDT_i,pLDDT_j,pTM,LIR_i,LIR_j,cLIR_i,cLIR_j,'
-    'LIpLDDT_i,LIpLDDT_j,cLIpLDDT_i,cLIpLDDT_j,'
+    'ipTM,pLDDT_i,pLDDT_j,pLDDT,pTM,LIR_i,LIR_j,cLIR_i,cLIR_j,'
+    'LIpLDDT_i,LIpLDDT_j,LIpLDDT,cLIpLDDT_i,cLIpLDDT_j,cLIpLDDT,'
     'len_i,len_j,LIR_indices_i,LIR_indices_j,cLIR_indices_i,cLIR_indices_j,'
     'structure_file'
 )
@@ -2184,6 +2184,20 @@ def _extract_model_num(struct_filename):
     return ''
 
 
+def _wmean_plddt(vi, vj, wi, wj):
+    """Weight-averaged per-pair pLDDT from two per-chain values, weighted by residue count
+    (chain length for overall pLDDT, interface-residue count for LIpLDDT/cLIpLDDT). This equals
+    the mean over the pooled residues. Returns None if either value is missing or weights are 0."""
+    if vi is None or vj is None:
+        return None
+    if (isinstance(vi, float) and math.isnan(vi)) or (isinstance(vj, float) and math.isnan(vj)):
+        return None
+    w = (wi or 0) + (wj or 0)
+    if w <= 0:
+        return None
+    return (wi * vi + wj * vj) / w
+
+
 def format_row(name, rank, struct_file, pair):
     """Format one CSV row from a pair dict."""
     def fmt_plddt(v):
@@ -2192,6 +2206,12 @@ def format_row(name, rank, struct_file, pair):
         return f'{v:.1f}'
 
     model_num = _extract_model_num(struct_file)
+
+    # Per-pair pLDDT: length-weighted mean of the two chains' pLDDT; the interface variants are
+    # weighted by interface-residue count (LIR/cLIR) rather than chain length.
+    plddt_pair = _wmean_plddt(pair.get('pLDDT_i'), pair.get('pLDDT_j'), pair['lenI'], pair['lenJ'])
+    liplddt_pair = _wmean_plddt(pair.get('LIpLDDT_i'), pair.get('LIpLDDT_j'), len(pair['lirI']), len(pair['lirJ']))
+    cliplddt_pair = _wmean_plddt(pair.get('cLIpLDDT_i'), pair.get('cLIpLDDT_j'), len(pair['clirI']), len(pair['clirJ']))
 
     row = [
         name, rank, model_num, pair['ci'], pair['cj'],
@@ -2202,13 +2222,16 @@ def format_row(name, rank, struct_file, pair):
         f"{pair['ipTM']:.4f}",
         fmt_plddt(pair.get('pLDDT_i')),
         fmt_plddt(pair.get('pLDDT_j')),
+        fmt_plddt(plddt_pair),
         f"{pair['pTM']:.3f}" if pair.get('pTM') is not None else '',
         str(len(pair['lirI'])), str(len(pair['lirJ'])),
         str(len(pair['clirI'])), str(len(pair['clirJ'])),
         fmt_plddt(pair.get('LIpLDDT_i')),
         fmt_plddt(pair.get('LIpLDDT_j')),
+        fmt_plddt(liplddt_pair),
         fmt_plddt(pair.get('cLIpLDDT_i')),
         fmt_plddt(pair.get('cLIpLDDT_j')),
+        fmt_plddt(cliplddt_pair),
         str(pair['lenI']), str(pair['lenJ']),
         format_indices(pair['lirI']),
         format_indices(pair['lirJ']),
