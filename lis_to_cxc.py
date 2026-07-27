@@ -384,10 +384,13 @@ CXC_HEADER = """# {fold}  rank={rank}  model={model}
 
 # Clear any 2D labels left over from a previous cxc in the same session
 # so this cxc's title/pair overlay starts from a clean slate.
-# NOTE: this is the global `~2dlabels` (drops ALL labels in the
-# session, including any you created by hand). Our labels are all
-# namespaced `lis2cxc_*` so a future ChimeraX version with wildcard
-# label-delete could narrow this to `2dlabels delete lis2cxc_*`.
+# A fresh ChimeraX (e.g. 1.12) only registers the `~2dlabels` delete form
+# after `2dlabels` has been used once in the session, so calling it first
+# errors "~2dlabels is an unknown command" (flyark/AFM-LIS#15). Create a
+# throwaway label to load the command, then `~2dlabels` drops ALL labels
+# (ours are namespaced `lis2cxc_*`; a future ChimeraX with wildcard delete
+# could narrow this to `2dlabels delete lis2cxc_*`).
+2dlabels create lis2cxc_reg text " "
 ~2dlabels
 
 close
@@ -1222,6 +1225,16 @@ def main() -> None:
                          "rank<N>_model<M>_LIR.pdb. Output is always PDB "
                          "regardless of input format (PDB→PDB filter; "
                          "mmCIF→atom_site parse→PDB)."))
+    p.add_argument("--save-lir-cxc", nargs="?", const="", default=None, metavar="DIR",
+                   help=("ALSO emit a companion .cxc that opens the LIR-only "
+                         "partial PDB directly, so the confident interface can be "
+                         "viewed as a standalone structure in ChimeraX (not just "
+                         "colored on the whole multimer). Implies writing that "
+                         "partial PDB — see --save-lir-pdb. Same per-chain "
+                         "LIR/cLIR coloring; residue numbers are preserved. Bare "
+                         "`--save-lir-cxc` → written alongside cxc files in --out. "
+                         "`--save-lir-cxc DIR` → written to DIR. Filename: "
+                         "<fold>__rank<N>_model<M>_LIR.cxc."))
     p.add_argument("--lir-min-segment", type=int, default=5,
                    help=("drop any contiguous run of LIR residues shorter than "
                          "this length AFTER gap-filling (default 5). Applies "
@@ -1557,12 +1570,15 @@ def main() -> None:
                 # --save-lir-pdb: emit a partial structure with only the
                 # gap-filled + pruned LIR atoms. Foldseek-multimer / etc.
                 # use this as the "confident interface" portable input.
-                if args.save_lir_pdb is not None:
-                    lir_pdb_dir = (Path(args.save_lir_pdb) if args.save_lir_pdb
-                                   else args.out)
-                    lir_pdb_dir.mkdir(parents=True, exist_ok=True)
+                # --save-lir-cxc implies writing the partial PDB it opens, so the
+                # partial is extracted when EITHER flag is set.
+                if args.save_lir_pdb is not None or args.save_lir_cxc is not None:
+                    lir_dir = (Path(args.save_lir_pdb) if args.save_lir_pdb
+                               else Path(args.save_lir_cxc) if args.save_lir_cxc
+                               else args.out)
+                    lir_dir.mkdir(parents=True, exist_ok=True)
                     lir_pdb_name = f"{name}__rank{rank}_model{model_clean}_LIR.pdb"
-                    lir_pdb_path = lir_pdb_dir / lir_pdb_name
+                    lir_pdb_path = lir_dir / lir_pdb_name
                     ok = extract_lir_partial_pdb(
                         cif_path, grp,
                         gap_fill=args.gap_fill,
@@ -1571,6 +1587,25 @@ def main() -> None:
                     )
                     if ok:
                         print(f"    + LIR-only partial PDB: {lir_pdb_name}")
+                        # --save-lir-cxc: companion cxc that opens the partial PDB
+                        # directly (standalone interface view). emit_cxc uses the
+                        # structure only as the `open` target; all LIR/cLIR ranges
+                        # come from the CSV rows and are preserved in the partial.
+                        if args.save_lir_cxc is not None:
+                            lir_cxc_name = f"{name}__rank{rank}_model{model_clean}_LIR.cxc"
+                            lir_cxc_path = lir_dir / lir_cxc_name
+                            emit_cxc(grp, lir_pdb_path, lir_cxc_path,
+                                     gap_fill=args.gap_fill,
+                                     palette=palette,
+                                     single_color=args.single_color,
+                                     lir_lighten=args.lir_lighten,
+                                     lir_palette=lir_palette,
+                                     clir_palette=clir_palette,
+                                     min_segment=args.lir_min_segment,
+                                     csv_path=csv_path,
+                                     metadata=md_row if md_row else None,
+                                     plddt=args.plddt)
+                            print(f"    + LIR-only cxc: {lir_cxc_name}")
                     else:
                         print(f"    ! could not extract LIR PDB for {out_name} "
                               f"(unsupported format or empty LIR after pruning)")
