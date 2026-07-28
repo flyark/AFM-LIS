@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 lis_to_cxc.py — Generate ChimeraX .cxc visualization scripts directly from
 lis.py output (`*_lis_analysis.csv`).
