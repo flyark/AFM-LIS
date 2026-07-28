@@ -370,14 +370,7 @@ CXC_HEADER = """# {fold}  rank={rank}  model={model}
 #   Source CSV:       {csv_abspath}
 #   Structure file:   {structure_abspath}
 #   Output cxc:       {cxc_abspath}
-# The `open` line below uses the structure's ABSOLUTE path (resolved at
-# generation time), so a double-click loads it regardless of ChimeraX's
-# working directory. This does tie the cxc to this machine's paths: if you
-# move or share the bundle to a different location, regenerate the cxc there
-# (or edit the open path). A relative path would NOT be more portable —
-# ChimeraX resolves a relative `open` against the working directory, which on
-# a double-click launch is ~/ (Linux) or ~/Desktop (macOS/Windows), not the
-# cxc's own folder (flyark/AFM-LIS#17).
+{path_note}
 #
 # iLIS thresholds (0.223 / 0.339 / 0.551 = FPR 10% / 5% / 1%) are calibrated
 # on large-scale Y2H reference sets in yeast, fly, and human predicted using
@@ -665,6 +658,7 @@ def emit_cxc(
     clir_palette: list[str] | None = None,
     lir_lighten: float = 0.5,
     min_segment: int = 5,
+    relative: bool = False,
 ) -> bool:
     """Emit one cxc covering every chain-pair row in this (fold, rank, model).
 
@@ -705,13 +699,27 @@ def emit_cxc(
         clir_palette=clir_palette,
     )
 
-    # Use the absolute path so the cxc keeps working even if it's moved
-    # later (Desktop → Downloads → wherever). The trade-off vs a relative
-    # path: cxc is now machine-specific (won't open if you ship it to
-    # someone who has a different absolute layout). For that case, the
-    # absolute path is annotated in the header comments and the user can
-    # re-generate or hand-edit the `open` line.
-    open_abspath = str(structure_path.resolve())  # ABSOLUTE — see note in CXC_HEADER (flyark/AFM-LIS#17)
+    # `open` path — absolute by default (reliable double-click on the machine that
+    # generated it), or relative to the cxc's own folder with --relative. ChimeraX
+    # resolves a relative `open` against the command file's location, so a relative
+    # path makes the cxc portable across machines/OS (e.g. generate on Linux, view
+    # on Windows) as long as the cxc + structure move together (flyark/AFM-LIS#17).
+    if relative:
+        try:
+            open_path = os.path.relpath(structure_path.resolve(), out_path.resolve().parent)
+        except ValueError:                       # different Windows drive: no relative path exists
+            open_path = str(structure_path.resolve())
+        open_path = open_path.replace(os.sep, '/')   # forward slashes so a Linux-made path also opens on Windows
+        path_note = ("# The `open` line below uses a path RELATIVE to this cxc's location, so the\n"
+                     "# bundle is portable: move or share the cxc together with its structure\n"
+                     "# (keeping their relative layout) and it opens on any machine/OS. ChimeraX\n"
+                     "# resolves the relative `open` against the cxc's own folder (--relative).")
+    else:
+        open_path = str(structure_path.resolve())
+        path_note = ("# The `open` line below uses the structure's ABSOLUTE path — reliable for\n"
+                     "# double-clicking on the machine that generated it. For a portable or\n"
+                     "# cross-OS bundle (e.g. generate on Linux, view on Windows), regenerate\n"
+                     "# with --relative (flyark/AFM-LIS#17).")
 
     # Build the at-a-glance interface summary block. One line per chain pair
     # with scores; two indented lines per pair listing LIR residue ranges
@@ -908,7 +916,8 @@ def emit_cxc(
         fold=head.get("name", "?"),
         rank=head.get("rank", "?"),
         model=head.get("model", "?"),
-        structure_openpath=open_abspath,
+        structure_openpath=open_path,
+        path_note=path_note,
         structure_abspath=str(structure_path.resolve()),
         csv_abspath=str(csv_path.resolve()) if csv_path else "(not provided)",
         cxc_abspath=str(out_path.resolve()),
@@ -1286,6 +1295,15 @@ def main() -> None:
                          "fly, and human predicted using ColabFold (AF2-multimer); see Kim et al., 2026 "
                          "for iLIS benchmark details. Different platforms (AF3, Boltz-2, Chai-1, "
                          "OpenFold3) may require different thresholds."))
+    p.add_argument("--relative", action="store_true",
+                   help=("write the structure path in the cxc's `open` line RELATIVE to "
+                         "the cxc's own folder instead of absolute. ChimeraX resolves a "
+                         "relative `open` against the command file's location, so this "
+                         "makes the bundle portable across machines and OSes (e.g. generate "
+                         "on Linux, view the cxc on Windows) as long as the cxc and its "
+                         "structure move together. Default is absolute (reliable for "
+                         "double-clicking on the machine that generated it). Applies to the "
+                         "main cxc and the --save-lir-cxc companion."))
     p.add_argument("--dry-run", action="store_true",
                    help="report what would be emitted without writing files")
     args = p.parse_args()
@@ -1569,7 +1587,8 @@ def main() -> None:
                              min_segment=args.lir_min_segment,
                              csv_path=csv_path,
                              metadata=md_row if md_row else None,
-                             plddt=args.plddt)
+                             plddt=args.plddt,
+                             relative=args.relative)
             if wrote:
                 total_written += 1
                 print(f"  ✓ {out_name}  ({len(grp)} chain pair{'s' if len(grp) != 1 else ''})")
@@ -1610,7 +1629,8 @@ def main() -> None:
                                      min_segment=args.lir_min_segment,
                                      csv_path=csv_path,
                                      metadata=md_row if md_row else None,
-                                     plddt=args.plddt)
+                                     plddt=args.plddt,
+                                     relative=args.relative)
                             print(f"    + LIR-only cxc: {lir_cxc_name}")
                     else:
                         print(f"    ! could not extract LIR PDB for {out_name} "
