@@ -370,9 +370,14 @@ CXC_HEADER = """# {fold}  rank={rank}  model={model}
 #   Source CSV:       {csv_abspath}
 #   Structure file:   {structure_abspath}
 #   Output cxc:       {cxc_abspath}
-# The `open` line below uses a path relative to this cxc's location, so
-# it works on double-click as long as the cxc-to-structure relative
-# layout is preserved when the bundle is moved or shared.
+# The `open` line below uses the structure's ABSOLUTE path (resolved at
+# generation time), so a double-click loads it regardless of ChimeraX's
+# working directory. This does tie the cxc to this machine's paths: if you
+# move or share the bundle to a different location, regenerate the cxc there
+# (or edit the open path). A relative path would NOT be more portable —
+# ChimeraX resolves a relative `open` against the working directory, which on
+# a double-click launch is ~/ (Linux) or ~/Desktop (macOS/Windows), not the
+# cxc's own folder (flyark/AFM-LIS#17).
 #
 # iLIS thresholds (0.223 / 0.339 / 0.551 = FPR 10% / 5% / 1%) are calibrated
 # on large-scale Y2H reference sets in yeast, fly, and human predicted using
@@ -398,7 +403,7 @@ close
 # Path is quoted so spaces / parentheses in directory names (e.g. macOS
 # `Library/CloudStorage`, Dropbox, iCloud folders, "Image Lab (Bio-RaD)")
 # don't break ChimeraX's `open` tokenizer.
-open "{structure_relpath}"
+open "{structure_openpath}"
 
 # Print the interface summary to ChimeraX's log so it's visible at-run-
 # time (comments above are parsed-then-discarded by ChimeraX, only useful
@@ -706,7 +711,7 @@ def emit_cxc(
     # someone who has a different absolute layout). For that case, the
     # absolute path is annotated in the header comments and the user can
     # re-generate or hand-edit the `open` line.
-    rel_structure = str(structure_path.resolve())
+    open_abspath = str(structure_path.resolve())  # ABSOLUTE — see note in CXC_HEADER (flyark/AFM-LIS#17)
 
     # Build the at-a-glance interface summary block. One line per chain pair
     # with scores; two indented lines per pair listing LIR residue ranges
@@ -903,7 +908,7 @@ def emit_cxc(
         fold=head.get("name", "?"),
         rank=head.get("rank", "?"),
         model=head.get("model", "?"),
-        structure_relpath=rel_structure,
+        structure_openpath=open_abspath,
         structure_abspath=str(structure_path.resolve()),
         csv_abspath=str(csv_path.resolve()) if csv_path else "(not provided)",
         cxc_abspath=str(out_path.resolve()),
