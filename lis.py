@@ -2332,14 +2332,9 @@ def calc_pdockq(avg_if_plddt, n_if_contacts):
     instead -- i.e. the same relationship cLIS already has to LIS, applied to pDockQ's formula.
     Unlike pDockQ2 (Zhu et al. 2023), which continuously downweights pLDDT by a PAE-decay function,
     this is a hard cutoff on interface *membership*, matching this codebase's LIR/cLIR convention."""
-    if n_if_contacts is None or n_if_contacts < 0:
+    if avg_if_plddt is None or n_if_contacts is None:
         return None
-    if n_if_contacts == 0:
-        # log10(0+1)=0 makes the pLDDT term vanish regardless of its value -- the formula's own
-        # floor (~0.018), evaluated even when avg_if_plddt is unavailable (no interface residues to
-        # average pLDDT over in the first place). A missing avg_if_plddt at n>0 stays None below.
-        return 0.724 / (1 + math.exp(-0.052 * (0 - 152.611))) + 0.018
-    if avg_if_plddt is None or (isinstance(avg_if_plddt, float) and math.isnan(avg_if_plddt)):
+    if (isinstance(avg_if_plddt, float) and math.isnan(avg_if_plddt)) or n_if_contacts < 0:
         return None
     x = avg_if_plddt * math.log10(n_if_contacts + 1)
     return 0.724 / (1 + math.exp(-0.052 * (x - 152.611))) + 0.018
@@ -2373,23 +2368,18 @@ def calc_pdockq2_chain(pae_block, contact_block, plddt_i):
     per-pair rather than per-chain-pooled.
 
     Constants from the authors' own fit (same source above), matching the paper to full precision:
-    L=1.31035, x0=84.7326, k=0.074716, b=0.0050189.
-
-    Zero qualifying interface cells (no contact at all, or contacts with no usable pLDDT) is a real
-    "no interface" finding -- PAE is always available when this function runs, so this is never a
-    missing-capability case -- and returns 0.0, not None. An entirely empty/malformed input (e.g. a
-    zero-length chain) is a different, structural case and still returns None."""
+    L=1.31035, x0=84.7326, k=0.074716, b=0.0050189."""
     if pae_block.size == 0 or contact_block.size == 0 or pae_block.shape != contact_block.shape:
         return None
     mask = contact_block.astype(bool)
     if not mask.any():
-        return 0.0
+        return None
     row_idx, _ = np.where(mask)
     pae_vals = pae_block[mask]
     plddt_vals = plddt_i[row_idx]
     valid = ~np.isnan(plddt_vals)
     if not valid.any():
-        return 0.0
+        return None
     pae_decay = 1.0 / (1.0 + (pae_vals[valid] / 10.0) ** 2)
     x = float(np.mean(pae_decay)) * float(np.mean(plddt_vals[valid]))
     return 1.31034849 / (1 + math.exp(-0.07471577 * (x - 84.73262390))) + 0.00501886
