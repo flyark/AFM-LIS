@@ -52,7 +52,6 @@ CSV_HEADER = (
     'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,actifpTM,LIS,cLIS,LIA,cLIA,'
     'ipTM,pLDDT_i,pLDDT_j,pLDDT,pTM,LIR_i,LIR_j,cLIR_i,cLIR_j,'
     'LIpLDDT_i,LIpLDDT_j,LIpLDDT,cLIpLDDT_i,cLIpLDDT_j,cLIpLDDT,'
-    'pDockQ,cpDockQ,pDockQ2_i,pDockQ2_j,cpDockQ2_i,cpDockQ2_j,'
     'len_i,len_j,LIR_indices_i,LIR_indices_j,cLIR_indices_i,cLIR_indices_j,'
     'structure_file'
 )
@@ -1456,86 +1455,6 @@ def parse_structure_coords(text, fmt):
     return parse_pdb_coords(text) if fmt == 'pdb' else parse_cif_coords(text)
 
 
-def parse_pdb_ca_coords(pdb_text):
-    """Extract one CA (P for nucleic) coordinate per residue from PDB text.
-
-    Separate from parse_pdb_coords (Cb-preferred) because pDockQ2's published logistic constants
-    were fit against a strictly CA-CA interface definition -- using this file's usual Cb-based
-    contact map for pDockQ2 measurably changes which residue pairs count as "interface" (Cb points
-    into the interface along the sidechain, so a Cb-Cb cutoff admits more, and more marginal, contacts
-    than the same cutoff on CA-CA), silently invalidating the fitted constants."""
-    residues = OrderedDict()
-    for line in pdb_text.split('\n'):
-        if not line.startswith('ATOM') and not line.startswith('HETATM'):
-            continue
-        if len(line) < 54:
-            continue
-        atom_name = line[12:16].strip()
-        chain = line[21:22].strip() or 'A'
-        try:
-            resnum = int(line[22:26].strip())
-        except ValueError:
-            continue
-        x = float(line[30:38])
-        y = float(line[38:46])
-        z = float(line[46:54])
-        key = f'{chain}:{resnum}'
-        if atom_name == 'CA':
-            residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
-        elif atom_name == 'P' and key not in residues:
-            residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
-    return list(residues.values())
-
-
-def parse_cif_ca_coords(cif_text):
-    """Extract one CA (P for nucleic) coordinate per residue from mmCIF text. See
-    parse_pdb_ca_coords for why pDockQ2 needs its own CA-only pass rather than reusing
-    parse_structure_coords's Cb-preferred one."""
-    residues = OrderedDict()
-    in_atom_site = False
-    col_names = []
-    for line in cif_text.split('\n'):
-        if line.startswith('_atom_site.'):
-            in_atom_site = True
-            col_names.append(line.strip().split('.')[1])
-            continue
-        if in_atom_site and not line.startswith('_atom_site.') and not line.startswith('#') and line.strip():
-            if line.startswith('loop_') or line.startswith('_'):
-                in_atom_site = False
-                continue
-            parts = line.strip().split()
-            if not parts or parts[0] not in ('ATOM', 'HETATM'):
-                continue
-
-            def get_col(name, _parts=parts, _cols=col_names):
-                idx = _cols.index(name) if name in _cols else -1
-                return _parts[idx] if idx >= 0 else ''
-
-            if get_col('group_PDB') not in ('ATOM', 'HETATM'):
-                continue
-            atom_name = get_col('label_atom_id')
-            chain = get_col('label_asym_id')
-            res_seq = get_col('label_seq_id')
-            try:
-                x = float(get_col('Cartn_x'))
-                y = float(get_col('Cartn_y'))
-                z = float(get_col('Cartn_z'))
-                resnum = int(res_seq)
-            except ValueError:
-                continue
-            key = f'{chain}:{resnum}'
-            if atom_name == 'CA':
-                residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
-            elif atom_name == 'P' and key not in residues:
-                residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
-    return list(residues.values())
-
-
-def parse_structure_ca_coords(text, fmt):
-    """CA-only counterpart to parse_structure_coords, for pDockQ2's own interface definition."""
-    return parse_pdb_ca_coords(text) if fmt == 'pdb' else parse_cif_ca_coords(text)
-
-
 # ============================================================================
 # Chain Boundary Extraction
 # ============================================================================
@@ -2011,12 +1930,6 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
     contact, n_coords = compute_contact_map(coords, cb_cutoff)
     n_use = min(n_total, n_coords)
 
-    # pDockQ2's own interface: CA-CA, hardcoded 8A regardless of --cb-cutoff -- its fitted logistic
-    # constants are only valid for the exact interface definition they were calibrated against.
-    ca_coords = parse_structure_ca_coords(struct_text, fmt)
-    ca_contact, n_ca = compute_contact_map(ca_coords, 8)
-    n_use_ca = min(n_total, n_ca)
-
     # Distance matrix for ipSAE (15Å cutoff)
     dist_matrix = None
     if len(coords) > 0:
@@ -2071,9 +1984,6 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             c_ej = min(ej, n_use)
             c_si = si
             c_sj = sj
-            # pDockQ2's own CA-based clip range, independent of the Cb-based one above.
-            ca_ei = min(ei, n_use_ca)
-            ca_ej = min(ej, n_use_ca)
             if c_ei > c_si and c_ej > c_sj:
                 contact_block = contact[c_si:c_ei, c_sj:c_ej].astype(bool)
                 t_contact = t_block[:c_ei-c_si, :c_ej-c_sj]
@@ -2084,17 +1994,11 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 either_contact = either_pos[:c_ei-c_si, :c_ej-c_sj] & contact_block
                 clir_i = set(np.where(either_contact.any(axis=1))[0] + 1)
                 clir_j = set(np.where(either_contact.any(axis=0))[0] + 1)
-                # Faithful original pDockQ (Bryant et al. 2022): pure geometric interface (Cb<8A,
-                # NO PAE at all) -- deliberately independent of this file's own PAE-gated LIR/cLIR.
-                geom_if_i = set(np.where(contact_block.any(axis=1))[0] + 1)
-                geom_if_j = set(np.where(contact_block.any(axis=0))[0] + 1)
             else:
                 clis_sum = 0.0
                 clis_count_avg = 0
                 clir_i = set()
                 clir_j = set()
-                geom_if_i = set()
-                geom_if_j = set()
 
             # LIA counts (asymmetric PAE < cutoff)
             pae_ij = pae[si:ei, sj:ej]
@@ -2110,35 +2014,6 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             else:
                 clis_count_ab = 0
                 clis_count_ba = 0
-
-            # pDockQ2 -- own CA-based interface (see ca_contact above), decoupled from the Cb-based
-            # cLIS/cLIR block: --cb-cutoff must never change which contacts feed pDockQ2's fitted constants.
-            if ca_ei > si and ca_ej > sj:
-                ca_block = ca_contact[si:ca_ei, sj:ca_ej].astype(bool)
-                pae_ij_ca = pae_ij[:ca_ei-si, :ca_ej-sj]
-                pae_ji_ca = pae_ji[:ca_ej-sj, :ca_ei-si]
-                plddt_i_arr = np.array([bfs.get(f'{chain_names[i]}:{p+1}', np.nan) for p in range(ca_ei-si)])
-                plddt_j_arr = np.array([bfs.get(f'{chain_names[j]}:{p+1}', np.nan) for p in range(ca_ej-sj)])
-                pdockq2_i = calc_pdockq2_chain(pae_ij_ca, ca_block, plddt_i_arr)
-                pdockq2_j = calc_pdockq2_chain(pae_ji_ca, ca_block.T, plddt_j_arr)
-            else:
-                pdockq2_i = None
-                pdockq2_j = None
-
-            # cpDockQ2: pDockQ2's continuous PAE-decay-weighted pLDDT, but applied over exactly the
-            # same (row,col) cells that define THIS file's own cLIR (PAE-cutoff AND physically-
-            # contacting -- either_contact above) instead of pDockQ2's own independent CA-8A interface.
-            # Reuses either_contact directly rather than rebuilding a mask from clir_i/clir_j, since a
-            # row x col outer product of those two sets would admit (row,col) pairs that individually
-            # never had a confident contact -- only qualified via a *different* partner in the union.
-            if c_ei > c_si and c_ej > c_sj:
-                plddt_i_c = np.array([bfs.get(f'{chain_names[i]}:{p+1}', np.nan) for p in range(c_ei-c_si)])
-                plddt_j_c = np.array([bfs.get(f'{chain_names[j]}:{p+1}', np.nan) for p in range(c_ej-c_sj)])
-                cpdockq2_i = calc_pdockq2_chain(pae_ij_c, either_contact, plddt_i_c)
-                cpdockq2_j = calc_pdockq2_chain(pae_ji_c, either_contact.T, plddt_j_c)
-            else:
-                cpdockq2_i = None
-                cpdockq2_j = None
 
             lis_val = lis_sum / lis_count_avg if lis_count_avg > 0 else 0.0
             clis_val = clis_sum / clis_count_avg if clis_count_avg > 0 else 0.0
@@ -2181,8 +2056,6 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             liplddt_j = _avg_bfactor(lir_j, chain_names[j], bfs)
             cliplddt_i = _avg_bfactor(clir_i, chain_names[i], bfs)
             cliplddt_j = _avg_bfactor(clir_j, chain_names[j], bfs)
-            geomplddt_i = _avg_bfactor(geom_if_i, chain_names[i], bfs)
-            geomplddt_j = _avg_bfactor(geom_if_j, chain_names[j], bfs)
 
             key = f'{chain_names[i]},{chain_names[j]}'
             pairs[key] = {
@@ -2202,14 +2075,6 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'LIpLDDT_j': liplddt_j,
                 'cLIpLDDT_i': cliplddt_i,
                 'cLIpLDDT_j': cliplddt_j,
-                'pDockQ2_i': pdockq2_i,
-                'pDockQ2_j': pdockq2_j,
-                'cpDockQ2_i': cpdockq2_i,
-                'cpDockQ2_j': cpdockq2_j,
-                'geomIfI': geom_if_i,
-                'geomIfJ': geom_if_j,
-                'geomPLDDT_i': geomplddt_i,
-                'geomPLDDT_j': geomplddt_j,
                 'lirI': lir_i,
                 'lirJ': lir_j,
                 'clirI': clir_i,
@@ -2249,10 +2114,6 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'clirJ': val['clirJ'] | rv['clirI'],
                 'LIpLDDT_i': val['LIpLDDT_i'], 'LIpLDDT_j': rv['LIpLDDT_i'],
                 'cLIpLDDT_i': val['cLIpLDDT_i'], 'cLIpLDDT_j': rv['cLIpLDDT_i'],
-                'pDockQ2_i': val['pDockQ2_i'], 'pDockQ2_j': rv['pDockQ2_i'],
-                'cpDockQ2_i': val['cpDockQ2_i'], 'cpDockQ2_j': rv['cpDockQ2_i'],
-                'geomIfI': val['geomIfI'] | rv['geomIfJ'], 'geomIfJ': val['geomIfJ'] | rv['geomIfI'],
-                'geomPLDDT_i': val['geomPLDDT_i'], 'geomPLDDT_j': rv['geomPLDDT_i'],
             }
             s['iLIS'] = math.sqrt(s['LIS'] * s['cLIS'])
             s['iLIA'] = math.sqrt(s['LIA'] * s['cLIA'])
@@ -2323,68 +2184,6 @@ def _extract_model_num(struct_filename):
     return ''
 
 
-def calc_pdockq(avg_if_plddt, n_if_contacts):
-    """pDockQ (Bryant, Pozzati & Elofsson 2022, Nat. Commun., author-corrected constants), applied
-    to a caller-supplied interface definition rather than pDockQ's original pure-distance one.
-    Original: avg_if_plddt = mean pLDDT over residues with >=1 inter-chain CB/CA contact <8 A;
-    n_if_contacts = count of such contacts. Same formula here, fed the file's own pure-geometric
-    interface (pDockQ) or cLIpLDDT/cLIA (PAE-cutoff AND physical-contact filtered: cpDockQ)
-    instead -- i.e. the same relationship cLIS already has to LIS, applied to pDockQ's formula.
-    Unlike pDockQ2 (Zhu et al. 2023), which continuously downweights pLDDT by a PAE-decay function,
-    this is a hard cutoff on interface *membership*, matching this codebase's LIR/cLIR convention."""
-    if avg_if_plddt is None or n_if_contacts is None:
-        return None
-    if (isinstance(avg_if_plddt, float) and math.isnan(avg_if_plddt)) or n_if_contacts < 0:
-        return None
-    x = avg_if_plddt * math.log10(n_if_contacts + 1)
-    return 0.724 / (1 + math.exp(-0.052 * (x - 152.611))) + 0.018
-
-
-def calc_pdockq2_chain(pae_block, contact_block, plddt_i):
-    """pDockQ2 (Zhu, Shenoy, Kundrotas & Elofsson 2023, Bioinformatics 39(7):btad424), for one chain's
-    side of one pair -- the score is inherently per-chain, not symmetric, since it weights THIS chain's
-    own interface pLDDT by how confidently the PAE matrix says it is positioned relative to the partner.
-    Unlike calc_pdockq() above (a hard PAE/contact cutoff on interface *membership*, matching this file's
-    LIR/cLIR convention), pDockQ2 continuously downweights each interface contact's pLDDT by a PAE-decay
-    factor 1/(1+(PAE/d0)^2), d0=10A -- a residue near the interface but poorly-aligned (high PAE)
-    contributes less, rather than being all-or-nothing in or out.
-
-    pae_block, contact_block: chain_i-residues x chain_j-residues submatrices, same shape (PAE in
-    chain_i's row direction; contact_block from compute_contact_map -- cb_cutoff physical distance, NOT
-    a PAE cutoff: pDockQ2 defines "interface" purely by geometry, same as this file's cLIR does).
-    plddt_i: chain_i's own per-residue pLDDT, 0-based indexed to match contact_block's row axis.
-
-    Averaging order matters and is not interchangeable: the PAE-decay values are averaged first, and
-    the pLDDT values are averaged separately, and only THEN are the two means multiplied -- not a
-    per-contact product averaged afterward. Verified against the authors' own reference implementation
-    (ElofssonLab/af2_scores, pdockq2-mod.py: `df['prot'] = df.ifpae_norm * df.ifplddt`), which also
-    counts a residue's pLDDT once per qualifying contact (not once per unique residue), so a residue
-    with more interface contacts contributes more to the mean -- reproduced here via row_idx below,
-    which repeats a row's pLDDT once per True cell in that row rather than deduplicating.
-
-    Reported per-pair (chain_i's pDockQ2 against chain_j specifically), not pooled across every partner
-    chain_i touches in a 3+-chain complex as the original per-chain definition would -- consistent with
-    how every other metric in this file (LIS, ipSAE, actifpTM, pDockQ/cpDockQ) is already reported
-    per-pair rather than per-chain-pooled.
-
-    Constants from the authors' own fit (same source above), matching the paper to full precision:
-    L=1.31035, x0=84.7326, k=0.074716, b=0.0050189."""
-    if pae_block.size == 0 or contact_block.size == 0 or pae_block.shape != contact_block.shape:
-        return None
-    mask = contact_block.astype(bool)
-    if not mask.any():
-        return None
-    row_idx, _ = np.where(mask)
-    pae_vals = pae_block[mask]
-    plddt_vals = plddt_i[row_idx]
-    valid = ~np.isnan(plddt_vals)
-    if not valid.any():
-        return None
-    pae_decay = 1.0 / (1.0 + (pae_vals[valid] / 10.0) ** 2)
-    x = float(np.mean(pae_decay)) * float(np.mean(plddt_vals[valid]))
-    return 1.31034849 / (1 + math.exp(-0.07471577 * (x - 84.73262390))) + 0.00501886
-
-
 def _wmean_plddt(vi, vj, wi, wj):
     """Weight-averaged per-pair pLDDT from two per-chain values, weighted by residue count
     (chain length for overall pLDDT, interface-residue count for LIpLDDT/cLIpLDDT). This equals
@@ -2413,12 +2212,6 @@ def format_row(name, rank, struct_file, pair):
     plddt_pair = _wmean_plddt(pair.get('pLDDT_i'), pair.get('pLDDT_j'), pair['lenI'], pair['lenJ'])
     liplddt_pair = _wmean_plddt(pair.get('LIpLDDT_i'), pair.get('LIpLDDT_j'), len(pair['lirI']), len(pair['lirJ']))
     cliplddt_pair = _wmean_plddt(pair.get('cLIpLDDT_i'), pair.get('cLIpLDDT_j'), len(pair['clirI']), len(pair['clirJ']))
-    # pDockQ: faithful original (Bryant et al. 2022) -- pure geometric interface, no PAE at all.
-    geomplddt_pair = _wmean_plddt(pair.get('geomPLDDT_i'), pair.get('geomPLDDT_j'), len(pair['geomIfI']), len(pair['geomIfJ']))
-    pdockq_orig = calc_pdockq(geomplddt_pair, len(pair['geomIfI']) + len(pair['geomIfJ']))
-    # cpDockQ: pDockQ's formula fed this file's own cLIR interface (PAE-cutoff AND contact-filtered)
-    # instead of pDockQ's own pure-distance one -- same relationship cLIS already has to LIS.
-    cpdockq = calc_pdockq(cliplddt_pair, pair['cLIA'])
 
     row = [
         name, rank, model_num, pair['ci'], pair['cj'],
@@ -2439,12 +2232,6 @@ def format_row(name, rank, struct_file, pair):
         fmt_plddt(pair.get('cLIpLDDT_i')),
         fmt_plddt(pair.get('cLIpLDDT_j')),
         fmt_plddt(cliplddt_pair),
-        f'{pdockq_orig:.4f}' if pdockq_orig is not None else '',
-        f'{cpdockq:.4f}' if cpdockq is not None else '',
-        f"{pair['pDockQ2_i']:.4f}" if pair.get('pDockQ2_i') is not None else '',
-        f"{pair['pDockQ2_j']:.4f}" if pair.get('pDockQ2_j') is not None else '',
-        f"{pair['cpDockQ2_i']:.4f}" if pair.get('cpDockQ2_i') is not None else '',
-        f"{pair['cpDockQ2_j']:.4f}" if pair.get('cpDockQ2_j') is not None else '',
         str(pair['lenI']), str(pair['lenJ']),
         format_indices(pair['lirI']),
         format_indices(pair['lirJ']),
