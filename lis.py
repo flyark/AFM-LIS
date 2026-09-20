@@ -52,7 +52,7 @@ CSV_HEADER = (
     'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,actifpTM,LIS,cLIS,LIA,cLIA,'
     'ipTM,pLDDT_i,pLDDT_j,pLDDT,pTM,LIR_i,LIR_j,cLIR_i,cLIR_j,'
     'LIpLDDT_i,LIpLDDT_j,LIpLDDT,cLIpLDDT_i,cLIpLDDT_j,cLIpLDDT,'
-    'pDockQ,cpDockQ,pDockQ2_i,pDockQ2_j,cpDockQ2_i,cpDockQ2_j,'
+    'pDockQ,LIpDockQ,pDockQ2_i,pDockQ2_j,LIpDockQ2_i,LIpDockQ2_j,'
     'len_i,len_j,LIR_indices_i,LIR_indices_j,cLIR_indices_i,cLIR_indices_j,'
     'structure_file'
 )
@@ -2088,6 +2088,9 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 # NO PAE at all) -- deliberately independent of this file's own PAE-gated LIR/cLIR.
                 geom_if_i = set(np.where(contact_block.any(axis=1))[0] + 1)
                 geom_if_j = set(np.where(contact_block.any(axis=0))[0] + 1)
+                # pDockQ's own N: count of contact PAIRS (cells), matching contacts.shape[0] in the
+                # reference implementation -- NOT len(geom_if_i)+len(geom_if_j) (residue count).
+                geom_n_contacts = int(contact_block.sum())
             else:
                 clis_sum = 0.0
                 clis_count_avg = 0
@@ -2095,6 +2098,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 clir_j = set()
                 geom_if_i = set()
                 geom_if_j = set()
+                geom_n_contacts = 0
 
             # LIA counts (asymmetric PAE < cutoff)
             pae_ij = pae[si:ei, sj:ej]
@@ -2125,7 +2129,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 pdockq2_i = None
                 pdockq2_j = None
 
-            # cpDockQ2: pDockQ2's continuous PAE-decay-weighted pLDDT, but applied over exactly the
+            # LIpDockQ2: pDockQ2's continuous PAE-decay-weighted pLDDT, but applied over exactly the
             # same (row,col) cells that define THIS file's own cLIR (PAE-cutoff AND physically-
             # contacting -- either_contact above) instead of pDockQ2's own independent CA-8A interface.
             # Reuses either_contact directly rather than rebuilding a mask from clir_i/clir_j, since a
@@ -2134,11 +2138,16 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             if c_ei > c_si and c_ej > c_sj:
                 plddt_i_c = np.array([bfs.get(f'{chain_names[i]}:{p+1}', np.nan) for p in range(c_ei-c_si)])
                 plddt_j_c = np.array([bfs.get(f'{chain_names[j]}:{p+1}', np.nan) for p in range(c_ej-c_sj)])
-                cpdockq2_i = calc_pdockq2_chain(pae_ij_c, either_contact, plddt_i_c)
-                cpdockq2_j = calc_pdockq2_chain(pae_ji_c, either_contact.T, plddt_j_c)
+                lipdockq2_i = calc_pdockq2_chain(pae_ij_c, either_contact, plddt_i_c)
+                lipdockq2_j = calc_pdockq2_chain(pae_ji_c, either_contact.T, plddt_j_c)
+                # LIpDockQ's own N: count of cLIR-qualifying pairs (either_contact cells), counted
+                # once each -- NOT cLIA, which sums both PAE directions and so double-counts a cell
+                # confident in both, putting it on a different scale than pDockQ's own pair count.
+                lipdockq_n = int(either_contact.sum())
             else:
-                cpdockq2_i = None
-                cpdockq2_j = None
+                lipdockq2_i = None
+                lipdockq2_j = None
+                lipdockq_n = 0
 
             lis_val = lis_sum / lis_count_avg if lis_count_avg > 0 else 0.0
             clis_val = clis_sum / clis_count_avg if clis_count_avg > 0 else 0.0
@@ -2204,12 +2213,14 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'cLIpLDDT_j': cliplddt_j,
                 'pDockQ2_i': pdockq2_i,
                 'pDockQ2_j': pdockq2_j,
-                'cpDockQ2_i': cpdockq2_i,
-                'cpDockQ2_j': cpdockq2_j,
+                'LIpDockQ2_i': lipdockq2_i,
+                'LIpDockQ2_j': lipdockq2_j,
                 'geomIfI': geom_if_i,
                 'geomIfJ': geom_if_j,
                 'geomPLDDT_i': geomplddt_i,
                 'geomPLDDT_j': geomplddt_j,
+                'geomNContacts': geom_n_contacts,
+                'LIpDockQN': lipdockq_n,
                 'lirI': lir_i,
                 'lirJ': lir_j,
                 'clirI': clir_i,
@@ -2250,9 +2261,14 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 'LIpLDDT_i': val['LIpLDDT_i'], 'LIpLDDT_j': rv['LIpLDDT_i'],
                 'cLIpLDDT_i': val['cLIpLDDT_i'], 'cLIpLDDT_j': rv['cLIpLDDT_i'],
                 'pDockQ2_i': val['pDockQ2_i'], 'pDockQ2_j': rv['pDockQ2_i'],
-                'cpDockQ2_i': val['cpDockQ2_i'], 'cpDockQ2_j': rv['cpDockQ2_i'],
+                'LIpDockQ2_i': val['LIpDockQ2_i'], 'LIpDockQ2_j': rv['LIpDockQ2_i'],
                 'geomIfI': val['geomIfI'] | rv['geomIfJ'], 'geomIfJ': val['geomIfJ'] | rv['geomIfI'],
                 'geomPLDDT_i': val['geomPLDDT_i'], 'geomPLDDT_j': rv['geomPLDDT_i'],
+                # Built from the same symmetric Cb-distance / either_contact matrix regardless of
+                # direction (val's contact_block/either_contact is rv's own, transposed), so these
+                # pair counts are already identical either way -- no averaging/union needed.
+                'geomNContacts': val['geomNContacts'],
+                'LIpDockQN': val['LIpDockQN'],
             }
             s['iLIS'] = math.sqrt(s['LIS'] * s['cLIS'])
             s['iLIA'] = math.sqrt(s['LIA'] * s['cLIA'])
@@ -2326,22 +2342,27 @@ def _extract_model_num(struct_filename):
 def calc_pdockq(avg_if_plddt, n_if_contacts):
     """pDockQ (Bryant, Pozzati & Elofsson 2022, Nat. Commun., author-corrected constants), applied
     to a caller-supplied interface definition rather than pDockQ's original pure-distance one.
-    Original: avg_if_plddt = mean pLDDT over residues with >=1 inter-chain CB/CA contact <8 A;
-    n_if_contacts = count of such contacts. Same formula here, fed the file's own pure-geometric
-    interface (pDockQ) or cLIpLDDT/cLIA (PAE-cutoff AND physical-contact filtered: cpDockQ)
-    instead -- i.e. the same relationship cLIS already has to LIS, applied to pDockQ's formula.
+    Verified against the authors' own reference implementation (ElofssonLab/FoldDock, src/pdockq.py):
+    avg_if_plddt = mean pLDDT over the UNIQUE residues touched by >=1 inter-chain contact <8 A;
+    n_if_contacts = contacts.shape[0] -- the COUNT OF CONTACT PAIRS (cells in the chain-A x chain-B
+    boolean matrix), NOT the count of unique interface residues -- x = avg_if_plddt * log10(n), no
+    +1. Same formula here, fed the file's own pure-geometric interface (pDockQ) or cLIpLDDT/the cLIR
+    cell count (PAE-cutoff AND physical-contact filtered: LIpDockQ) instead -- i.e. the same
+    relationship cLIS already has to LIS, applied to pDockQ's formula. Both callers must pass a PAIR
+    count (matching contacts.shape[0]), not a residue count and not LIA/cLIA (which sum both PAE
+    directions and so double-counts a cell confident in both) -- passing the wrong kind of count
+    silently produces a pDockQ/LIpDockQ pair that isn't on the same scale and isn't comparable.
     Unlike pDockQ2 (Zhu et al. 2023), which continuously downweights pLDDT by a PAE-decay function,
     this is a hard cutoff on interface *membership*, matching this codebase's LIR/cLIR convention."""
     if n_if_contacts is None or n_if_contacts < 0:
         return None
     if n_if_contacts == 0:
-        # log10(0+1)=0 makes the pLDDT term vanish regardless of its value -- the formula's own
-        # floor (~0.018), evaluated even when avg_if_plddt is unavailable (no interface residues to
-        # average pLDDT over in the first place). A missing avg_if_plddt at n>0 stays None below.
-        return 0.724 / (1 + math.exp(-0.052 * (0 - 152.611))) + 0.018
+        # Matches the reference implementation's own explicit special case (contacts.shape[0]<1 ->
+        # pdockq=0) -- a literal 0.0, not the sigmoid evaluated at x=0.
+        return 0.0
     if avg_if_plddt is None or (isinstance(avg_if_plddt, float) and math.isnan(avg_if_plddt)):
         return None
-    x = avg_if_plddt * math.log10(n_if_contacts + 1)
+    x = avg_if_plddt * math.log10(n_if_contacts)
     return 0.724 / (1 + math.exp(-0.052 * (x - 152.611))) + 0.018
 
 
@@ -2369,7 +2390,7 @@ def calc_pdockq2_chain(pae_block, contact_block, plddt_i):
 
     Reported per-pair (chain_i's pDockQ2 against chain_j specifically), not pooled across every partner
     chain_i touches in a 3+-chain complex as the original per-chain definition would -- consistent with
-    how every other metric in this file (LIS, ipSAE, actifpTM, pDockQ/cpDockQ) is already reported
+    how every other metric in this file (LIS, ipSAE, actifpTM, pDockQ/LIpDockQ) is already reported
     per-pair rather than per-chain-pooled.
 
     Constants from the authors' own fit (same source above), matching the paper to full precision:
@@ -2424,11 +2445,15 @@ def format_row(name, rank, struct_file, pair):
     liplddt_pair = _wmean_plddt(pair.get('LIpLDDT_i'), pair.get('LIpLDDT_j'), len(pair['lirI']), len(pair['lirJ']))
     cliplddt_pair = _wmean_plddt(pair.get('cLIpLDDT_i'), pair.get('cLIpLDDT_j'), len(pair['clirI']), len(pair['clirJ']))
     # pDockQ: faithful original (Bryant et al. 2022) -- pure geometric interface, no PAE at all.
+    # N is the contact PAIR count (geomNContacts), matching contacts.shape[0] in the reference
+    # implementation -- NOT len(geomIfI)+len(geomIfJ) (a residue count, wrong units for this formula).
     geomplddt_pair = _wmean_plddt(pair.get('geomPLDDT_i'), pair.get('geomPLDDT_j'), len(pair['geomIfI']), len(pair['geomIfJ']))
-    pdockq_orig = calc_pdockq(geomplddt_pair, len(pair['geomIfI']) + len(pair['geomIfJ']))
-    # cpDockQ: pDockQ's formula fed this file's own cLIR interface (PAE-cutoff AND contact-filtered)
-    # instead of pDockQ's own pure-distance one -- same relationship cLIS already has to LIS.
-    cpdockq = calc_pdockq(cliplddt_pair, pair['cLIA'])
+    pdockq_orig = calc_pdockq(geomplddt_pair, pair['geomNContacts'])
+    # LIpDockQ: pDockQ's formula fed this file's own cLIR interface (PAE-cutoff AND contact-filtered)
+    # instead of pDockQ's own pure-distance one -- same relationship cLIS already has to LIS. N is
+    # LIpDockQN (cLIR-qualifying pairs, counted once), NOT cLIA (sums both PAE directions, so double-
+    # counts a cell confident in both -- puts it on a different scale than pDockQ's own N).
+    lipdockq = calc_pdockq(cliplddt_pair, pair['LIpDockQN'])
 
     row = [
         name, rank, model_num, pair['ci'], pair['cj'],
@@ -2450,11 +2475,11 @@ def format_row(name, rank, struct_file, pair):
         fmt_plddt(pair.get('cLIpLDDT_j')),
         fmt_plddt(cliplddt_pair),
         f'{pdockq_orig:.4f}' if pdockq_orig is not None else '',
-        f'{cpdockq:.4f}' if cpdockq is not None else '',
+        f'{lipdockq:.4f}' if lipdockq is not None else '',
         f"{pair['pDockQ2_i']:.4f}" if pair.get('pDockQ2_i') is not None else '',
         f"{pair['pDockQ2_j']:.4f}" if pair.get('pDockQ2_j') is not None else '',
-        f"{pair['cpDockQ2_i']:.4f}" if pair.get('cpDockQ2_i') is not None else '',
-        f"{pair['cpDockQ2_j']:.4f}" if pair.get('cpDockQ2_j') is not None else '',
+        f"{pair['LIpDockQ2_i']:.4f}" if pair.get('LIpDockQ2_i') is not None else '',
+        f"{pair['LIpDockQ2_j']:.4f}" if pair.get('LIpDockQ2_j') is not None else '',
         str(pair['lenI']), str(pair['lenJ']),
         format_indices(pair['lirI']),
         format_indices(pair['lirJ']),
