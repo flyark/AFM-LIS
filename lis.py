@@ -52,7 +52,7 @@ CSV_HEADER = (
     'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,actifpTM,LIS,cLIS,LIA,cLIA,'
     'ipTM,pLDDT_i,pLDDT_j,pLDDT,pTM,LIR_i,LIR_j,cLIR_i,cLIR_j,'
     'LIpLDDT_i,LIpLDDT_j,LIpLDDT,cLIpLDDT_i,cLIpLDDT_j,cLIpLDDT,'
-    'pDockQ,LIpDockQ,pDockQ2_i,pDockQ2_j,LIpDockQ2_i,LIpDockQ2_j,'
+    'pDockQ,LIpDockQ,pDockQ2_i,pDockQ2_j,pDockQ2,LIpDockQ2_i,LIpDockQ2_j,LIpDockQ2,'
     'len_i,len_j,LIR_indices_i,LIR_indices_j,cLIR_indices_i,cLIR_indices_j,'
     'structure_file'
 )
@@ -2430,6 +2430,20 @@ def _wmean_plddt(vi, vj, wi, wj):
     return (wi * vi + wj * vj) / w
 
 
+def _mean2_nullable(a, b):
+    """Simple two-value mean, falling back to whichever side is present if the other is missing
+    (None if both are). Matches universal.html's mean2Nullable() -- used for pDockQ2/LIpDockQ2's
+    symmetric (bare) column alongside the existing per-direction _i/_j ones, since neither has a
+    natural weight the way pLDDT does (they're already sigmoid outputs, not raw quantities)."""
+    if a is None and b is None:
+        return None
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return (a + b) / 2
+
+
 def format_row(name, rank, struct_file, pair):
     """Format one CSV row from a pair dict."""
     def fmt_plddt(v):
@@ -2454,6 +2468,10 @@ def format_row(name, rank, struct_file, pair):
     # LIpDockQN (cLIR-qualifying pairs, counted once), NOT cLIA (sums both PAE directions, so double-
     # counts a cell confident in both -- puts it on a different scale than pDockQ's own N).
     lipdockq = calc_pdockq(cliplddt_pair, pair['LIpDockQN'])
+    # Symmetric (bare) pDockQ2/LIpDockQ2 alongside the existing per-direction _i/_j columns --
+    # simple mean, matching universal.html's own CSV export (LIS_CSV_HEADER / lisScoreCols()).
+    pdockq2_pair = _mean2_nullable(pair.get('pDockQ2_i'), pair.get('pDockQ2_j'))
+    lipdockq2_pair = _mean2_nullable(pair.get('LIpDockQ2_i'), pair.get('LIpDockQ2_j'))
 
     row = [
         name, rank, model_num, pair['ci'], pair['cj'],
@@ -2478,8 +2496,10 @@ def format_row(name, rank, struct_file, pair):
         f'{lipdockq:.4f}' if lipdockq is not None else '',
         f"{pair['pDockQ2_i']:.4f}" if pair.get('pDockQ2_i') is not None else '',
         f"{pair['pDockQ2_j']:.4f}" if pair.get('pDockQ2_j') is not None else '',
+        f'{pdockq2_pair:.4f}' if pdockq2_pair is not None else '',
         f"{pair['LIpDockQ2_i']:.4f}" if pair.get('LIpDockQ2_i') is not None else '',
         f"{pair['LIpDockQ2_j']:.4f}" if pair.get('LIpDockQ2_j') is not None else '',
+        f'{lipdockq2_pair:.4f}' if lipdockq2_pair is not None else '',
         str(pair['lenI']), str(pair['lenJ']),
         format_indices(pair['lirI']),
         format_indices(pair['lirJ']),
