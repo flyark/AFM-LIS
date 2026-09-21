@@ -1369,7 +1369,27 @@ def parse_pdb_coords(pdb_text):
         elif atom_name == 'P' and key not in residues:
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
 
-    return list(residues.values())
+    return _fill_residue_gaps(residues)
+
+
+def _fill_residue_gaps(residues):
+    """LOCAL FIX 2026-09-21 (report upstream): keep coordinate indices aligned with the PAE/pLDDT arrays
+    when a polymer residue has no atoms in the structure. ColabFold writes nothing for an 'X' residue, so
+    the coordinate list was one short and every residue after the gap (and every later chain) was shifted
+    by one against the PAE matrix. Missing residue numbers inside each chain's numbering range become NaN
+    placeholders: NaN distances never satisfy the contact cutoff and NaN B-factors are already skipped."""
+    polymer = OrderedDict(); het = []
+    for key, r in residues.items():
+        if key.startswith('het:'):
+            het.append(r)
+        else:
+            polymer.setdefault(r['chain'], {})[r['resnum']] = r
+    out = []
+    for chain, byres in polymer.items():
+        lo, hi = min(byres), max(byres)
+        for n in range(lo, hi + 1):
+            out.append(byres.get(n) or {'chain': chain, 'resnum': n, 'x': float('nan'), 'y': float('nan'), 'z': float('nan'), 'has_p': False})
+    return out + het
 
 
 def parse_cif_coords(cif_text):
@@ -1544,6 +1564,7 @@ def get_chains_from_pdb(pdb_text):
     """Extract chain names, sizes, and types from PDB ATOM records."""
     chain_order = []
     chain_counts = OrderedDict()
+    chain_span = {}
     seen_residues = set()
 
     for line in pdb_text.split('\n'):
@@ -1562,10 +1583,17 @@ def get_chains_from_pdb(pdb_text):
             chain_order.append(chain)
             chain_counts[chain] = 0
         chain_counts[chain] += 1
+        # LOCAL FIX 2026-09-21: track the numbering span so a residue with no atoms ('X') still counts
+        try:
+            rn = int(resnum)
+            lo, hi = chain_span.get(chain, (rn, rn))
+            chain_span[chain] = (min(lo, rn), max(hi, rn))
+        except ValueError:
+            pass
 
     return {
         'names': chain_order,
-        'sizes': [chain_counts[c] for c in chain_order],
+        'sizes': [max(chain_counts[c], chain_span[c][1] - chain_span[c][0] + 1) if c in chain_span else chain_counts[c] for c in chain_order],
         'types': ['protein'] * len(chain_order),
     }
 
@@ -2420,10 +2448,14 @@ def _wmean_plddt(vi, vj, wi, wj):
     """Weight-averaged per-pair pLDDT from two per-chain values, weighted by residue count
     (chain length for overall pLDDT, interface-residue count for LIpLDDT/cLIpLDDT). This equals
     the mean over the pooled residues. Returns None if either value is missing or weights are 0."""
-    if vi is None or vj is None:
+    # LOCAL FIX 2026-09-21 (report upstream): a side whose value is missing (None/NaN) contributes nothing
+    # instead of voiding the pair. Seen when the PDB lacks a residue (ColabFold wrote no atoms for it), so
+    # the interface residue index from PAE space has no B-factor: cLIR_i=1, cLIpLDDT_i=NaN -> LIpDockQ was ''.
+    def _ok(v): return v is not None and not (isinstance(v, float) and math.isnan(v))
+    if not _ok(vi) and not _ok(vj):
         return None
-    if (isinstance(vi, float) and math.isnan(vi)) or (isinstance(vj, float) and math.isnan(vj)):
-        return None
+    if not _ok(vi): wi = 0; vi = 0.0
+    if not _ok(vj): wj = 0; vj = 0.0
     w = (wi or 0) + (wj or 0)
     if w <= 0:
         return None
