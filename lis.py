@@ -2154,7 +2154,7 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
             ilis_val = math.sqrt(lis_val * clis_val)
 
             iptm_val = global_iptm
-            if iptm_matrix:
+            if iptm_matrix is not None:
                 try:
                     if isinstance(iptm_matrix, dict):
                         # OpenFold3 format: {'(A, B)': 0.235}
