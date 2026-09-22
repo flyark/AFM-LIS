@@ -1561,39 +1561,37 @@ def parse_structure_ca_coords(text, fmt):
 # ============================================================================
 
 def get_chains_from_pdb(pdb_text):
-    """Extract chain names, sizes, and types from PDB ATOM records."""
+    """Extract chain names, sizes, and types from PDB ATOM records.
+
+    LOCAL FIX 2026-09-22 (report upstream, supersedes the 2026-09-21 chain_span patch -- same result
+    for every case that one covered, see below): derives names/sizes from parse_pdb_coords' own output
+    instead of a second, independent CA/P-counting pass over the file. The two were only kept in sync
+    by construction (both had to separately reimplement "what counts as a residue/chain"), and drifted
+    apart whenever an ion HETATM (which parse_pdb_coords inserts as a one-residue pseudo-chain, see
+    ION_NAMES there) sat between two real chains in the file: this function silently skipped it (only
+    ATOM lines were counted), so the size -- and therefore the start/end indices used to slice the PAE
+    matrix -- for every chain after it was off by the ion's width. A single source of truth for "how
+    many residues does this chain have" removes that whole class of bug rather than special-casing the
+    ion here too.
+
+    Still equals the pre-refactor chain_span result for the case that fix targeted (a polymer residue
+    with no atoms in the structure, e.g. ColabFold's 'X'): parse_pdb_coords already fills exactly that
+    gap with a NaN-coordinate placeholder, so grouping its output per chain always yields the chain's
+    full numbering span, not just its observed-atom count.
+    """
+    coords = parse_pdb_coords(pdb_text)
     chain_order = []
     chain_counts = OrderedDict()
-    chain_span = {}
-    seen_residues = set()
-
-    for line in pdb_text.split('\n'):
-        if not line.startswith('ATOM'):
-            continue
-        atom_name = line[12:16].strip()
-        if atom_name not in ('CA', 'P'):
-            continue
-        chain = line[21:22].strip() or 'A'
-        resnum = line[22:26].strip()
-        rkey = f'{chain}:{resnum}'
-        if rkey in seen_residues:
-            continue
-        seen_residues.add(rkey)
+    for c in coords:
+        chain = c['chain']
         if chain not in chain_counts:
             chain_order.append(chain)
             chain_counts[chain] = 0
         chain_counts[chain] += 1
-        # LOCAL FIX 2026-09-21: track the numbering span so a residue with no atoms ('X') still counts
-        try:
-            rn = int(resnum)
-            lo, hi = chain_span.get(chain, (rn, rn))
-            chain_span[chain] = (min(lo, rn), max(hi, rn))
-        except ValueError:
-            pass
 
     return {
         'names': chain_order,
-        'sizes': [max(chain_counts[c], chain_span[c][1] - chain_span[c][0] + 1) if c in chain_span else chain_counts[c] for c in chain_order],
+        'sizes': [chain_counts[c] for c in chain_order],
         'types': ['protein'] * len(chain_order),
     }
 
