@@ -965,7 +965,7 @@ def _find_generic(filenames, basenames_map, read_fn=None):
 # ============================================================================
 
 def load_manifest(filenames, read_fn, manifest_arg=None):
-    """Load an optional lis.json manifest for layouts auto-detection doesn't recognise.
+    """Load an optional lis.json manifest for layouts auto-detection doesn't recognize.
 
     Looked up from --manifest, else a lis.json / lis_manifest.json among the inputs.
     Returns the parsed dict (with '_dir' = the manifest's directory, for resolving relative
