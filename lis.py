@@ -199,11 +199,17 @@ def _scan_dir(dirpath, file_map):
 
 
 def _make_dir_reader(file_map):
-    """Create a reader function for directory-based file_map."""
+    """Create a reader function for directory-based file_map.
+
+    A folder can hold zipped predictions: _scan_dir() then stores those members as (zip_path, member) entries or nesting
+    chains, which are read the same way as zip input."""
+    zip_read = _make_zip_reader(file_map)
     def read_fn(name):
         fpath = file_map.get(name)
         if fpath is None:
             return None
+        if not isinstance(fpath, str):
+            return zip_read(name)
         with open(fpath, 'rb') as f:
             data = f.read()
         return _decode_content(fpath, data)
@@ -1770,7 +1776,7 @@ def compute_contact_map(coords, threshold=8):
     p_adjustment[p_mask] = -4.0
     adjusted = distances + p_adjustment
 
-    contact = (adjusted < threshold).astype(np.uint8)
+    contact = (adjusted <= threshold).astype(np.uint8)
     return contact, n
 
 
@@ -1781,13 +1787,13 @@ def compute_contact_map(coords, threshold=8):
 def transform_pae_matrix(pae, pae_cutoff=12):
     """Transform PAE to confidence scores. Asymmetric, per-direction.
 
-    Per-direction LIS = 1 - mean(PAE<cutoff)/cutoff is recovered by leaving
+    Per-direction LIS = 1 - mean(PAE<=cutoff)/cutoff is recovered by leaving
     PAE[i,j] and PAE[j,i] independent. The (i,j) and (j,i) chain-pair entries
     are then averaged downstream in analyze_single_model's symmetrize step.
     """
     pae = np.asarray(pae, dtype=np.float64)
     transformed = np.zeros_like(pae)
-    mask = pae < pae_cutoff
+    mask = pae <= pae_cutoff
     transformed[mask] = 1.0 - pae[mask] / pae_cutoff
     return transformed
 
@@ -1835,10 +1841,10 @@ def calc_pae_chain_pair_iptm(pae, starts, ends):
             else:
                 block_ab = pae[sa:ea, sb:eb]
                 tm_ab = 1.0 / (1.0 + (block_ab * block_ab) / d0sq)
-                row_a = tm_ab.mean(axis=1)
+                row_a = tm_ab.mean(axis=1)  # rows in chain a → cols in chain b
                 block_ba = pae[sb:eb, sa:ea]
                 tm_ba = 1.0 / (1.0 + (block_ba * block_ba) / d0sq)
-                row_b = tm_ba.mean(axis=1)
+                row_b = tm_ba.mean(axis=1)  # rows in chain b → cols in chain a
                 row_avgs = np.concatenate([row_a, row_b])
             out[a, b] = float(row_avgs.max()) if row_avgs.size else 0.0
     return out
@@ -1851,7 +1857,8 @@ def calc_pae_chain_pair_iptm(pae, starts, ends):
 def calc_ipsae(pae, si, ei, sj, ej, pae_cutoff):
     """Calculate ipSAE (Dunbrack d0res method) for a chain pair.
 
-    d0 from per-residue count of inter-chain residues with PAE < cutoff.
+    d0 from per-residue count of inter-chain residues with PAE < cutoff (strict, as in Dunbrack's
+    ipsae.py; unlike the LIS family, which uses PAE <= cutoff).
     No distance filter. PAE cutoff only.
     Returns max of two asymmetric scores.
     """
@@ -2080,15 +2087,16 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
 
             # Vectorized LIS/cLIS computation (transformed is asymmetric per-direction)
             t_block = transformed[si:ei, sj:ej]
-            t_pos = t_block > 0
+            # Confident cells are PAE <= cutoff. A cell exactly at the cutoff scores 0 but still counts,
+            # so the mask comes from the PAE itself, not from transformed > 0.
+            t_pos = pae[si:ei, sj:ej] <= pae_cutoff
 
             lis_sum = float(t_block[t_pos].sum())
             lis_count_avg = int(t_pos.sum())
 
             # LIR: cell-based union — a residue is in LIR if either direction is confident
             # on any of its cells (paired across the block's row/col).
-            t_block_rev = transformed[sj:ej, si:ei]
-            either_pos = t_pos | (t_block_rev.T > 0)
+            either_pos = t_pos | (pae[sj:ej, si:ei].T <= pae_cutoff)
             lir_i = set(np.where(either_pos.any(axis=1))[0] + 1)
             lir_j = set(np.where(either_pos.any(axis=0))[0] + 1)
 
@@ -2126,17 +2134,17 @@ def analyze_single_model(struct_text, pae_matrix, scores, fmt, platform,
                 geom_if_j = set()
                 geom_n_contacts = 0
 
-            # LIA counts (asymmetric PAE < cutoff)
+            # LIA counts (asymmetric PAE <= cutoff)
             pae_ij = pae[si:ei, sj:ej]
             pae_ji = pae[sj:ej, si:ei]
-            lis_count_ab = int((pae_ij < pae_cutoff).sum())
-            lis_count_ba = int((pae_ji < pae_cutoff).sum())
+            lis_count_ab = int((pae_ij <= pae_cutoff).sum())
+            lis_count_ba = int((pae_ji <= pae_cutoff).sum())
 
             if c_ei > c_si and c_ej > c_sj:
                 pae_ij_c = pae_ij[:c_ei-c_si, :c_ej-c_sj]
                 pae_ji_c = pae_ji[:c_ej-c_sj, :c_ei-c_si]
-                clis_count_ab = int(((pae_ij_c < pae_cutoff) & contact_block).sum())
-                clis_count_ba = int(((pae_ji_c < pae_cutoff) & contact_block.T).sum())
+                clis_count_ab = int(((pae_ij_c <= pae_cutoff) & contact_block).sum())
+                clis_count_ba = int(((pae_ji_c <= pae_cutoff) & contact_block.T).sum())
             else:
                 clis_count_ab = 0
                 clis_count_ba = 0
@@ -2369,7 +2377,7 @@ def calc_pdockq(avg_if_plddt, n_if_contacts):
     """pDockQ (Bryant, Pozzati & Elofsson 2022, Nat. Commun., author-corrected constants), applied
     to a caller-supplied interface definition rather than pDockQ's original pure-distance one.
     Verified against the authors' own reference implementation (ElofssonLab/FoldDock, src/pdockq.py):
-    avg_if_plddt = mean pLDDT over the UNIQUE residues touched by >=1 inter-chain contact <8 A;
+    avg_if_plddt = mean pLDDT over the UNIQUE residues touched by >=1 inter-chain contact <=8 A;
     n_if_contacts = contacts.shape[0] -- the COUNT OF CONTACT PAIRS (cells in the chain-A x chain-B
     boolean matrix), NOT the count of unique interface residues -- x = avg_if_plddt * log10(n), no
     +1. Same formula here, fed the file's own pure-geometric interface (pDockQ) or cLIpLDDT/the cLIR
@@ -2802,9 +2810,9 @@ def run(path, output=None, output_dir=None, pae_cutoff=12, cb_cutoff=8,
         status = 'OK' if ok else 'FAIL'
         print(f'\r[LIS] {bar} {pct}% ({n}/{total}) {elapsed_str} elapsed, ETA {eta_str} | {name} {status}      ', end='', flush=True)
         if not ok and err_msg:
-            # Always surface failures so the bad-file path lands in the log,
-            # not just under --verbose. Goes to stderr so it's visible even
-            # when stdout is captured by a progress collector.
+            # Always surface failures so the bad-file path (and hints like --allow-pickle)
+            # land in the log, not just under --verbose. stderr stays visible even when
+            # stdout is captured by a progress collector.
             print(f'\n[LIS] FAIL {name} rank={rank}: {err_msg}', file=sys.stderr, flush=True)
 
     # Check if input is a folder (needed for multiprocessing — zip read_fn can't be pickled)
