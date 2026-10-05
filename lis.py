@@ -4,7 +4,7 @@ LIS -- Local Interaction Score Analysis (CLI)
 ==============================================
 Calculate LIS/cLIS/iLIS metrics from structure prediction outputs.
 
-Supports: AlphaFold3, ColabFold, AlphaPulldown (AF-Multimer), Boltz, Chai-1, OpenFold3, Generic
+Supports: AlphaFold3, Protenix-v2 (AF3 layout), ColabFold, AlphaPulldown (AF-Multimer), Boltz, Chai-1, OpenFold3, ESMFold2, Generic
 Input:    folder or zip file with prediction outputs
 Output:   CSV with one row per model per chain pair
 
@@ -2904,7 +2904,7 @@ Examples:
     parser.add_argument('--cb-cutoff', type=float, default=8,
                         help='Cb distance cutoff in Angstroms (default: 8)')
     parser.add_argument('--platform', default=None,
-                        choices=['alphafold3', 'alphapulldown', 'colabfold', 'boltz', 'chai', 'openfold3', 'generic'],
+                        choices=['alphafold3', 'alphapulldown', 'colabfold', 'boltz', 'chai', 'openfold3', 'esmfold2', 'generic'],
                         help='Force platform detection (default: auto-detect)')
     parser.add_argument('--manifest', default=None,
                         help='Path to a lis.json manifest declaring the data (structure/pae/pae_key/summary '
