@@ -1375,14 +1375,22 @@ def parse_pdb_coords(pdb_text):
         elif atom_name == 'P' and key not in residues:
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
 
-    return _fill_residue_gaps(residues)
+    return _fill_residue_gaps(residues) if fill_residue_gaps() else list(residues.values())
+
+
+def fill_residue_gaps():
+    """--fill-residue-gaps (off by default). Off: a residue with no atoms in a PDB file (ColabFold writes none
+    for an 'X') is left out, as lis.py did before 2026-09-21. On: it is kept
+    as a NaN placeholder so coordinates stay aligned with the PAE matrix after it. Read from the environment so
+    worker processes see the same setting."""
+    return os.environ.get('LIS_FILL_RESIDUE_GAPS') == '1'
 
 
 def _fill_residue_gaps(residues):
-    """LOCAL FIX 2026-09-21 (report upstream): keep coordinate indices aligned with the PAE/pLDDT arrays
-    when a polymer residue has no atoms in the structure. ColabFold writes nothing for an 'X' residue, so
-    the coordinate list was one short and every residue after the gap (and every later chain) was shifted
-    by one against the PAE matrix. Missing residue numbers inside each chain's numbering range become NaN
+    """With --fill-residue-gaps: keep coordinate indices aligned with the PAE/pLDDT arrays when a polymer
+    residue has no atoms in the structure. ColabFold writes nothing for an 'X' residue, so without this the
+    coordinate list is one short and every residue after the gap (and every later chain) is shifted by one
+    against the PAE matrix. Missing residue numbers inside each chain's numbering range become NaN
     placeholders: NaN distances never satisfy the contact cutoff and NaN B-factors are already skipped."""
     polymer = OrderedDict(); het = []
     for key, r in residues.items():
@@ -1580,10 +1588,9 @@ def get_chains_from_pdb(pdb_text):
     many residues does this chain have" removes that whole class of bug rather than special-casing the
     ion here too.
 
-    Still equals the pre-refactor chain_span result for the case that fix targeted (a polymer residue
-    with no atoms in the structure, e.g. ColabFold's 'X'): parse_pdb_coords already fills exactly that
-    gap with a NaN-coordinate placeholder, so grouping its output per chain always yields the chain's
-    full numbering span, not just its observed-atom count.
+    A polymer residue with no atoms in the structure (e.g. ColabFold's 'X') follows parse_pdb_coords: by
+    default it is not counted, as before 2026-09-21; with --fill-residue-gaps it is a NaN-coordinate
+    placeholder, so the chain's size is its full numbering span.
     """
     coords = parse_pdb_coords(pdb_text)
     chain_order = []
@@ -2454,10 +2461,12 @@ def _wmean_plddt(vi, vj, wi, wj):
     """Weight-averaged per-pair pLDDT from two per-chain values, weighted by residue count
     (chain length for overall pLDDT, interface-residue count for LIpLDDT/cLIpLDDT). This equals
     the mean over the pooled residues. Returns None if either value is missing or weights are 0."""
-    # LOCAL FIX 2026-09-21 (report upstream): a side whose value is missing (None/NaN) contributes nothing
-    # instead of voiding the pair. Seen when the PDB lacks a residue (ColabFold wrote no atoms for it), so
-    # the interface residue index from PAE space has no B-factor: cLIR_i=1, cLIpLDDT_i=NaN -> LIpDockQ was ''.
+    # With --fill-residue-gaps, a side whose value is missing (None/NaN) contributes nothing instead of voiding
+    # the pair: an interface residue with no atoms in the PDB has no B-factor (cLIR_i=1, cLIpLDDT_i=NaN).
     def _ok(v): return v is not None and not (isinstance(v, float) and math.isnan(v))
+    if not fill_residue_gaps():
+        if not _ok(vi) or not _ok(vj):
+            return None
     if not _ok(vi) and not _ok(vj):
         return None
     if not _ok(vi): wi = 0; vi = 0.0
@@ -2919,7 +2928,13 @@ Examples:
                         help='Permit reading PAE from a .pkl/.pickle file declared in a manifest '
                              '(e.g. a raw AlphaFold2/-Multimer result_*.pkl). Unpickling executes '
                              'arbitrary code — only use on files you trust.')
+    parser.add_argument('--fill-residue-gaps', action='store_true',
+                        help="Keep a residue with no atoms in a PDB file (ColabFold writes none for an 'X') as an "
+                             'empty placeholder, so residues after it stay aligned with the PAE matrix. Off by '
+                             'default: such a residue is left out, as lis.py did before 2026-09-21.')
     args = parser.parse_args()
+    if args.fill_residue_gaps:
+        os.environ['LIS_FILL_RESIDUE_GAPS'] = '1'
 
     if not os.path.exists(args.path):
         print(f'[LIS] ERROR: Path not found: {args.path}', file=sys.stderr)
