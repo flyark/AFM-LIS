@@ -47,6 +47,20 @@ from scipy.spatial.distance import pdist, squareform
 # ============================================================================
 
 ION_NAMES = {'ZN', 'CA', 'MG', 'MN', 'FE', 'CU', 'NA', 'K', 'CL', 'NI', 'CO', 'CD'}
+NUCLEIC_COMP = {'DA', 'DT', 'DG', 'DC', 'DU', 'A', 'U', 'G', 'C', 'ADE', 'THY', 'GUA', 'CYT', 'URA'}
+MOD_AA = {
+    'SEP', 'TPO', 'PTR', 'MSE', 'SEC', 'HYP', 'CSO', 'CSD', 'CME', 'CSS', 'OCS',
+    'MLY', 'M3L', 'MLZ', 'ALY', 'KCX', 'PCA', 'CGU', 'NEP', 'HIC', 'SAC', 'MHO',
+    'CAS', 'DDZ', 'SNN', 'CXM', 'FME', 'CSX', 'CSP', 'TYS', 'SXE', 'LLP', 'SAH',
+    'SAM', 'ACE', 'NME',
+}
+
+
+def _unquote_cif(tok):
+    """Strip one matched pair of surrounding mmCIF quotes without touching internal primes (e.g. C4')."""
+    if len(tok) >= 2 and ((tok[0] == '"' and tok[-1] == '"') or (tok[0] == "'" and tok[-1] == "'")):
+        return tok[1:-1]
+    return tok
 
 CSV_HEADER = (
     'name,rank,model,chain_i,chain_j,iLIS,iLIA,iLISA,ipSAE,actifpTM,LIS,cLIS,LIA,cLIA,'
@@ -1335,8 +1349,8 @@ def extract_confidence_scores(confidence_path, read_fn):
 # ============================================================================
 
 def parse_pdb_coords(pdb_text):
-    """Extract one Cb (Ca for GLY, P for nucleic) coordinate per polymer residue,
-    plus one coordinate per non-polymer HETATM atom, from PDB text. See
+    """Extract one Cb (Ca for GLY, P or 5'-terminal C4' for nucleic) coordinate per polymer
+    residue, plus one coordinate per non-polymer HETATM atom, from PDB text. See
     parse_cif_coords for why per-atom HETATM coords keep the PAE alignment."""
     residues = OrderedDict()
     het_idx = 0
@@ -1346,17 +1360,20 @@ def parse_pdb_coords(pdb_text):
         if len(line) < 54:
             continue
         atom_name = line[12:16].strip()
-        comp_id = line[17:20].strip()
+        comp_id = line[17:20].strip().upper()
         chain = line[21:22].strip() or 'A'
-        x = float(line[30:38])
-        y = float(line[38:46])
-        z = float(line[46:54])
+        try:
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+        except ValueError:
+            continue
 
         if line.startswith('HETATM'):
-            # Ion = one monatomic token; glycan/ligand = one token per atom.
+            # One token per HETATM atom (ion = 1 atom each, glycan/ligand = N atoms).
             if comp_id in ION_NAMES:
-                if f'{chain}:1' not in residues:
-                    residues[f'{chain}:1'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+                residues[f'ion:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+                het_idx += 1
             else:
                 residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': 'P' in atom_name}
                 het_idx += 1
@@ -1372,7 +1389,9 @@ def parse_pdb_coords(pdb_text):
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
         elif atom_name == 'CA' and comp_id == 'GLY' and key not in residues:
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
-        elif atom_name == 'P' and key not in residues:
+        elif atom_name == 'P':
+            residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
+        elif atom_name == "C4'" and comp_id in NUCLEIC_COMP and key not in residues:
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
 
     return _fill_residue_gaps(residues) if fill_residue_gaps() else list(residues.values())
@@ -1394,7 +1413,7 @@ def _fill_residue_gaps(residues):
     placeholders: NaN distances never satisfy the contact cutoff and NaN B-factors are already skipped."""
     polymer = OrderedDict(); het = []
     for key, r in residues.items():
-        if key.startswith('het:'):
+        if key.startswith('het:') or key.startswith('ion:'):
             het.append(r)
         else:
             polymer.setdefault(r['chain'], {})[r['resnum']] = r
@@ -1407,8 +1426,8 @@ def _fill_residue_gaps(residues):
 
 
 def parse_cif_coords(cif_text):
-    """Extract one Cb (Ca for GLY, P for nucleic) coordinate per polymer residue,
-    plus one coordinate per non-polymer HETATM atom, from mmCIF text.
+    """Extract one Cb (Ca for GLY, P or 5'-terminal C4' for nucleic) coordinate per polymer
+    residue, plus one coordinate per non-polymer HETATM atom, from mmCIF text.
 
     AlphaFold3 tokenizes every glycan/ligand atom separately, so the PAE matrix
     has one token per HETATM atom. Emitting one coordinate per atom keeps the
@@ -1432,22 +1451,20 @@ def parse_cif_coords(cif_text):
             # Boltz CIFs wrap the trailing pdbx_PDB_model_num field onto the next
             # line for some atoms (data line has 18 fields + a lone "1" on the
             # next line). Don't enforce strict column-count match — just gate
-            # on the first token being ATOM/HETATM. get_col() returns '' for
-            # any column past parts.length, which is harmless: we never read
-            # the wrapped model_num column.
+            # on the first token being ATOM/HETATM.
             if not parts or parts[0] not in ('ATOM', 'HETATM'):
                 continue
 
             def get_col(name, _parts=parts, _cols=col_names):
                 idx = _cols.index(name) if name in _cols else -1
-                return _parts[idx] if idx >= 0 else ''
+                return _parts[idx] if 0 <= idx < len(_parts) else ''
 
             group_pdb = get_col('group_PDB')
             if group_pdb not in ('ATOM', 'HETATM'):
                 continue
 
-            atom_name = get_col('label_atom_id')
-            comp_id = get_col('label_comp_id')
+            atom_name = _unquote_cif(get_col('label_atom_id'))
+            comp_id = get_col('label_comp_id').upper()
             chain = get_col('label_asym_id')
             res_seq = get_col('label_seq_id')
 
@@ -1459,11 +1476,10 @@ def parse_cif_coords(cif_text):
                 continue
 
             if group_pdb == 'HETATM':
-                # Ion = one monatomic token; glycan/ligand = one token per atom.
+                # One token per HETATM atom (ion = 1 atom each, glycan/ligand = N atoms).
                 if comp_id in ION_NAMES:
-                    ion_key = f'{chain}:1'
-                    if ion_key not in residues:
-                        residues[ion_key] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+                    residues[f'ion:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': False}
+                    het_idx += 1
                 else:
                     residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': x, 'y': y, 'z': z, 'has_p': 'P' in atom_name}
                     het_idx += 1
@@ -1479,7 +1495,9 @@ def parse_cif_coords(cif_text):
                 residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
             elif atom_name == 'CA' and comp_id == 'GLY' and key not in residues:
                 residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
-            elif atom_name == 'P' and key not in residues:
+            elif atom_name == 'P':
+                residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
+            elif atom_name == "C4'" and comp_id in NUCLEIC_COMP and key not in residues:
                 residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
 
     return list(residues.values())
@@ -1491,41 +1509,56 @@ def parse_structure_coords(text, fmt):
 
 
 def parse_pdb_ca_coords(pdb_text):
-    """Extract one CA (P for nucleic) coordinate per residue from PDB text.
-
-    Separate from parse_pdb_coords (Cb-preferred) because pDockQ2's published logistic constants
-    were fit against a strictly CA-CA interface definition -- using this file's usual Cb-based
-    contact map for pDockQ2 measurably changes which residue pairs count as "interface" (Cb points
-    into the interface along the sidechain, so a Cb-Cb cutoff admits more, and more marginal, contacts
-    than the same cutoff on CA-CA), silently invalidating the fitted constants."""
+    """Extract one CA (P or 5'-terminal C4' for nucleic) coordinate per polymer residue from
+    PDB text, plus NaN-coordinate placeholders for non-protein HETATM tokens so indices stay
+    1:1 aligned with parse_pdb_coords and the PAE matrix."""
     residues = OrderedDict()
+    het_idx = 0
     for line in pdb_text.split('\n'):
         if not line.startswith('ATOM') and not line.startswith('HETATM'):
             continue
         if len(line) < 54:
             continue
         atom_name = line[12:16].strip()
+        comp_id = line[17:20].strip().upper()
         chain = line[21:22].strip() or 'A'
+        try:
+            x = float(line[30:38])
+            y = float(line[38:46])
+            z = float(line[46:54])
+        except ValueError:
+            continue
+        if line.startswith('HETATM'):
+            if atom_name == 'CA' and comp_id in MOD_AA:
+                try:
+                    rn = int(line[22:26].strip())
+                except ValueError:
+                    rn = 1
+                residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': rn, 'x': x, 'y': y, 'z': z, 'has_p': False}
+            else:
+                residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': float('nan'), 'y': float('nan'), 'z': float('nan'), 'has_p': False}
+            het_idx += 1
+            continue
         try:
             resnum = int(line[22:26].strip())
         except ValueError:
             continue
-        x = float(line[30:38])
-        y = float(line[38:46])
-        z = float(line[46:54])
         key = f'{chain}:{resnum}'
         if atom_name == 'CA':
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
-        elif atom_name == 'P' and key not in residues:
+        elif atom_name == 'P':
             residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
-    return list(residues.values())
+        elif atom_name == "C4'" and comp_id in NUCLEIC_COMP and key not in residues:
+            residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
+    return _fill_residue_gaps(residues) if fill_residue_gaps() else list(residues.values())
 
 
 def parse_cif_ca_coords(cif_text):
-    """Extract one CA (P for nucleic) coordinate per residue from mmCIF text. See
-    parse_pdb_ca_coords for why pDockQ2 needs its own CA-only pass rather than reusing
-    parse_structure_coords's Cb-preferred one."""
+    """Extract one CA (P or 5'-terminal C4' for nucleic) coordinate per polymer residue from
+    mmCIF text, plus NaN-coordinate placeholders for non-protein HETATM tokens so indices stay
+    1:1 aligned with parse_cif_coords and the PAE matrix."""
     residues = OrderedDict()
+    het_idx = 0
     in_atom_site = False
     col_names = []
     for line in cif_text.split('\n'):
@@ -1543,24 +1576,42 @@ def parse_cif_ca_coords(cif_text):
 
             def get_col(name, _parts=parts, _cols=col_names):
                 idx = _cols.index(name) if name in _cols else -1
-                return _parts[idx] if idx >= 0 else ''
+                return _parts[idx] if 0 <= idx < len(_parts) else ''
 
-            if get_col('group_PDB') not in ('ATOM', 'HETATM'):
+            group_pdb = get_col('group_PDB')
+            if group_pdb not in ('ATOM', 'HETATM'):
                 continue
-            atom_name = get_col('label_atom_id')
+            atom_name = _unquote_cif(get_col('label_atom_id'))
+            comp_id = get_col('label_comp_id').upper()
             chain = get_col('label_asym_id')
             res_seq = get_col('label_seq_id')
             try:
                 x = float(get_col('Cartn_x'))
                 y = float(get_col('Cartn_y'))
                 z = float(get_col('Cartn_z'))
+            except ValueError:
+                continue
+            if group_pdb == 'HETATM':
+                if atom_name == 'CA' and comp_id in MOD_AA:
+                    try:
+                        rn = int(res_seq)
+                    except ValueError:
+                        rn = 1
+                    residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': rn, 'x': x, 'y': y, 'z': z, 'has_p': False}
+                else:
+                    residues[f'het:{chain}:{het_idx}'] = {'chain': chain, 'resnum': 1, 'x': float('nan'), 'y': float('nan'), 'z': float('nan'), 'has_p': False}
+                het_idx += 1
+                continue
+            try:
                 resnum = int(res_seq)
             except ValueError:
                 continue
             key = f'{chain}:{resnum}'
             if atom_name == 'CA':
                 residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': False}
-            elif atom_name == 'P' and key not in residues:
+            elif atom_name == 'P':
+                residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
+            elif atom_name == "C4'" and comp_id in NUCLEIC_COMP and key not in residues:
                 residues[key] = {'chain': chain, 'resnum': resnum, 'x': x, 'y': y, 'z': z, 'has_p': True}
     return list(residues.values())
 
@@ -1575,23 +1626,11 @@ def parse_structure_ca_coords(text, fmt):
 # ============================================================================
 
 def get_chains_from_pdb(pdb_text):
-    """Extract chain names, sizes, and types from PDB ATOM records.
+    """Extract chain names, sizes, and types from PDB records.
 
-    LOCAL FIX 2026-09-22 (report upstream, supersedes the 2026-09-21 chain_span patch -- same result
-    for every case that one covered, see below): derives names/sizes from parse_pdb_coords' own output
-    instead of a second, independent CA/P-counting pass over the file. The two were only kept in sync
-    by construction (both had to separately reimplement "what counts as a residue/chain"), and drifted
-    apart whenever an ion HETATM (which parse_pdb_coords inserts as a one-residue pseudo-chain, see
-    ION_NAMES there) sat between two real chains in the file: this function silently skipped it (only
-    ATOM lines were counted), so the size -- and therefore the start/end indices used to slice the PAE
-    matrix -- for every chain after it was off by the ion's width. A single source of truth for "how
-    many residues does this chain have" removes that whole class of bug rather than special-casing the
-    ion here too.
-
-    A polymer residue with no atoms in the structure (e.g. ColabFold's 'X') follows parse_pdb_coords: by
-    default it is not counted, as before 2026-09-21; with --fill-residue-gaps it is a NaN-coordinate
-    placeholder, so the chain's size is its full numbering span.
-    """
+    Derives names/sizes directly from parse_pdb_coords so chain widths always match
+    the coordinate array (including ions, glycans, 5'-terminal nucleic residues, and
+    --fill-residue-gaps placeholders), and infers chain types from ATOM/HETATM comp_ids."""
     coords = parse_pdb_coords(pdb_text)
     chain_order = []
     chain_counts = OrderedDict()
@@ -1602,10 +1641,33 @@ def get_chains_from_pdb(pdb_text):
             chain_counts[chain] = 0
         chain_counts[chain] += 1
 
+    chain_types = {}
+    for line in pdb_text.split('\n'):
+        if len(line) < 26:
+            continue
+        is_atom = line.startswith('ATOM')
+        is_het = not is_atom and line.startswith('HETATM')
+        if not is_atom and not is_het:
+            continue
+        atom_name = line[12:16].strip()
+        comp_id = line[17:20].strip().upper()
+        chain = line[21:22].strip() or 'A'
+        if is_atom and (atom_name == 'P' or (atom_name == "C4'" and comp_id in NUCLEIC_COMP)):
+            chain_types[chain] = 'dna' if comp_id.startswith('D') else 'rna'
+        elif is_atom and atom_name == 'CA' and chain not in chain_types:
+            chain_types[chain] = 'protein'
+        elif is_het and comp_id in ION_NAMES:
+            chain_types[chain] = 'ion'
+        elif is_het:
+            if atom_name == 'CA' or comp_id in MOD_AA:
+                chain_types[chain] = 'protein'
+            elif chain not in chain_types:
+                chain_types[chain] = 'glycan'
+
     return {
         'names': chain_order,
         'sizes': [chain_counts[c] for c in chain_order],
-        'types': ['protein'] * len(chain_order),
+        'types': [chain_types.get(c, 'protein') for c in chain_order],
     }
 
 
@@ -1631,42 +1693,41 @@ def get_chains_from_cif(cif_text):
             # Boltz CIFs wrap the trailing pdbx_PDB_model_num field onto the next
             # line for some atoms (data line has 18 fields + a lone "1" on the
             # next line). Don't enforce strict column-count match — just gate
-            # on the first token being ATOM/HETATM. get_col() returns '' for
-            # any column past parts.length, which is harmless: we never read
-            # the wrapped model_num column.
+            # on the first token being ATOM/HETATM.
             if not parts or parts[0] not in ('ATOM', 'HETATM'):
                 continue
 
             def get_col(name, _parts=parts, _cols=col_names):
                 idx = _cols.index(name) if name in _cols else -1
-                return _parts[idx] if idx >= 0 else ''
+                return _parts[idx] if 0 <= idx < len(_parts) else ''
 
             group_pdb = get_col('group_PDB')
-            atom_name = get_col('label_atom_id')
-            comp_id = get_col('label_comp_id')
+            atom_name = _unquote_cif(get_col('label_atom_id'))
+            comp_id = get_col('label_comp_id').upper()
             chain = get_col('label_asym_id')
             res_seq = get_col('label_seq_id')
 
             counted = False
-            if group_pdb == 'ATOM' and atom_name in ('CA', 'P'):
+            if group_pdb == 'ATOM' and (atom_name in ('CA', 'P') or (atom_name == "C4'" and comp_id in NUCLEIC_COMP)):
                 rkey = f'{chain}:{res_seq}'
                 if rkey not in seen_residues:
                     seen_residues.add(rkey)
                     counted = True
-                    if atom_name == 'P':
+                    if atom_name in ('P', "C4'"):
                         chain_types[chain] = 'dna' if comp_id.startswith('D') else 'rna'
                     elif chain not in chain_types:
                         chain_types[chain] = 'protein'
             elif group_pdb == 'HETATM' and comp_id in ION_NAMES:
-                rkey = f'{chain}:ion'
-                if rkey not in seen_residues:
-                    seen_residues.add(rkey)
-                    counted = True
-                    chain_types[chain] = 'ion'
-            elif group_pdb == 'HETATM':
-                # Glycan / ligand (non-ion HETATM): one token per atom in AF3.
-                chain_types[chain] = 'glycan'
+                # One token per ion atom (supports both single-ion and multi-ion chains).
                 counted = True
+                chain_types[chain] = 'ion'
+            elif group_pdb == 'HETATM':
+                # Non-ion HETATM: one token per atom in AF3; keep MOD_AA chains typed as 'protein'.
+                counted = True
+                if atom_name == 'CA' or comp_id in MOD_AA:
+                    chain_types[chain] = 'protein'
+                elif chain not in chain_types:
+                    chain_types[chain] = 'glycan'
 
             if counted:
                 if chain not in chain_counts:
@@ -1691,25 +1752,52 @@ def get_chains_from_structure(text, fmt):
 # ============================================================================
 
 def parse_bfactors_per_residue(text, fmt):
-    """Parse B-factors (pLDDT) per residue from structure file.
+    """Parse B-factors (pLDDT) per residue/token from PDB or mmCIF.
 
-    Returns dict of {chain:resnum: bfactor} using CA atoms.
+    Returns dict of {chain:resnum: bfactor}:
+      - Protein: CA atoms (1-based residue number)
+      - DNA/RNA: P atoms with 5'-terminal C4' fallback
+      - Non-polymer HETATM (glycan/ligand/ion): sequential 1-based token index per chain
+      - Modified amino acids (HETATM with integer seq_id): residue number
     """
     bfactors = {}
+    het_seq = {}
 
     if fmt == 'pdb':
         for line in text.split('\n'):
-            if not line.startswith('ATOM') or len(line) < 66:
+            if len(line) < 66:
                 continue
-            if line[12:16].strip() != 'CA':
-                continue
-            chain = line[21:22].strip() or 'A'
-            try:
-                rn = int(line[22:26].strip())
-                bf = float(line[60:66].strip())
-            except ValueError:
-                continue
-            bfactors[f'{chain}:{rn}'] = bf
+            if line.startswith('ATOM'):
+                atom_name = line[12:16].strip()
+                comp_id = line[17:20].strip().upper()
+                chain = line[21:22].strip() or 'A'
+                try:
+                    rn = int(line[22:26].strip())
+                    bf = float(line[60:66].strip())
+                except ValueError:
+                    continue
+                k = f'{chain}:{rn}'
+                if atom_name in ('CA', 'P'):
+                    bfactors[k] = bf
+                elif atom_name == "C4'" and comp_id in NUCLEIC_COMP and k not in bfactors:
+                    bfactors[k] = bf
+            elif line.startswith('HETATM'):
+                comp_id = line[17:20].strip().upper()
+                chain = line[21:22].strip() or 'A'
+                try:
+                    bf = float(line[60:66].strip())
+                except ValueError:
+                    continue
+                if comp_id in MOD_AA:
+                    try:
+                        rn = int(line[22:26].strip())
+                        bfactors[f'{chain}:{rn}'] = bf
+                        continue
+                    except ValueError:
+                        pass
+                idx = het_seq.get(chain, 0) + 1
+                het_seq[chain] = idx
+                bfactors[f'{chain}:{idx}'] = bf
     else:
         in_atom_site = False
         col_names = []
@@ -1723,22 +1811,41 @@ def parse_bfactors_per_residue(text, fmt):
                     in_atom_site = False
                     continue
                 parts = line.strip().split()
-                if len(parts) < len(col_names):
+                if not parts or parts[0] not in ('ATOM', 'HETATM'):
                     continue
 
                 def get_col(name, _parts=parts, _cols=col_names):
                     idx = _cols.index(name) if name in _cols else -1
-                    return _parts[idx] if idx >= 0 else ''
+                    return _parts[idx] if 0 <= idx < len(_parts) else ''
 
-                if get_col('group_PDB') != 'ATOM' or get_col('label_atom_id') != 'CA':
+                group_pdb = get_col('group_PDB')
+                if group_pdb not in ('ATOM', 'HETATM'):
                     continue
+                atom_name = _unquote_cif(get_col('label_atom_id'))
+                comp_id = get_col('label_comp_id').upper()
                 chain = get_col('label_asym_id')
                 try:
-                    rn = int(get_col('label_seq_id'))
                     bf = float(get_col('B_iso_or_equiv'))
                 except ValueError:
                     continue
-                bfactors[f'{chain}:{rn}'] = bf
+                if group_pdb == 'ATOM':
+                    try:
+                        rn = int(get_col('label_seq_id'))
+                    except ValueError:
+                        continue
+                    k = f'{chain}:{rn}'
+                    if atom_name in ('CA', 'P'):
+                        bfactors[k] = bf
+                    elif atom_name == "C4'" and comp_id in NUCLEIC_COMP and k not in bfactors:
+                        bfactors[k] = bf
+                else:
+                    try:
+                        rn = int(get_col('label_seq_id'))
+                        bfactors[f'{chain}:{rn}'] = bf
+                    except ValueError:
+                        idx = het_seq.get(chain, 0) + 1
+                        het_seq[chain] = idx
+                        bfactors[f'{chain}:{idx}'] = bf
 
     # Auto-scale 0–1 pLDDT to 0–100 (e.g. ESMFold2 native PDB stores pLDDT on 0–1).
     # Use max value as a heuristic: AlphaFold/ColabFold use 0–100, ESMFold uses 0–1.
